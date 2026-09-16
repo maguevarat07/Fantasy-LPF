@@ -1173,6 +1173,7 @@ export function createApp(options: CreateAppOptions = {}) {
     } else if (process.env.NODE_ENV !== 'production' && error instanceof Error) {
       body.issues = error.message;
     }
+    if (status >= 500) console.error('[api:error]', error);
     res.status(status).json({ error: body });
   });
 
