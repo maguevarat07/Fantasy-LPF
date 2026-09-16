@@ -1,5 +1,5 @@
-import type { CanonicalDataRepository, CanonicalDataTransaction } from './repository.ts';
-import type { SourceObservation, SyncRunRecord } from './types.ts';
+import type { CanonicalDataRepository, CanonicalDataTransaction } from './repository.js';
+import type { SourceObservation, SyncRunRecord } from './types.js';
 
 type UpsertResult = 'created' | 'updated' | 'unchanged';
 

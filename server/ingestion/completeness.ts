@@ -1,4 +1,4 @@
-import type { AdapterResult, CompletenessReport, NormalizedEntity, NormalizedPlayer, ReconciliationResult, Source } from './types.ts';
+import type { AdapterResult, CompletenessReport, NormalizedEntity, NormalizedPlayer, ReconciliationResult, Source } from './types.js';
 
 export function buildCompletenessReport(adapters: AdapterResult[], reconciliation: ReconciliationResult): CompletenessReport {
   const players = reconciliation.accepted.filter((entity): entity is NormalizedPlayer => entity.kind === 'player');

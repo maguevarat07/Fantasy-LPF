@@ -1,8 +1,8 @@
 import * as cheerio from 'cheerio';
-import { buildResult, type SourceAdapter } from '../adapter.ts';
-import { fetchDocument, isLikelyBotBlock } from '../http.ts';
-import { cleanText, normalizeIdentity, normalizePosition, parseNullableInt } from '../normalization.ts';
-import type { NormalizedClub, NormalizedEntity, NormalizedMatch, NormalizedPlayer, NormalizedPlayerStat, SourceObservation } from '../types.ts';
+import { buildResult, type SourceAdapter } from '../adapter.js';
+import { fetchDocument, isLikelyBotBlock } from '../http.js';
+import { cleanText, normalizeIdentity, normalizePosition, parseNullableInt } from '../normalization.js';
+import type { NormalizedClub, NormalizedEntity, NormalizedMatch, NormalizedPlayer, NormalizedPlayerStat, SourceObservation } from '../types.js';
 
 const DEFAULT_COMPETITION_URL = 'https://www.transfermarkt.es/liga-panamena-de-futbol-apertura/startseite/wettbewerb/PN1A/saison_id/2026';
 const DEFAULT_IMAGE_URL = 'https://img.a.transfermarkt.technology/portrait/medium/default.jpg?lm=4711';

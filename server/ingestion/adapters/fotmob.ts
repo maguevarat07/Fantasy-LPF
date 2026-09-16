@@ -1,7 +1,7 @@
 import * as cheerio from 'cheerio';
-import { buildResult, type SourceAdapter } from '../adapter.ts';
-import { fetchDocument, isLikelyBotBlock } from '../http.ts';
-import type { SourceObservation } from '../types.ts';
+import { buildResult, type SourceAdapter } from '../adapter.js';
+import { fetchDocument, isLikelyBotBlock } from '../http.js';
+import type { SourceObservation } from '../types.js';
 
 const DEFAULT_LPF_URL = 'https://www.fotmob.com/leagues/9039/matches/lpf';
 const BROWSER_USER_AGENT = process.env.FOTMOB_USER_AGENT

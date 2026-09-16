@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import type { SourceAdapter } from './adapter.ts';
-import { buildCompletenessReport } from './completeness.ts';
-import { persistEntities, type CanonicalDataRepository } from './repository.ts';
-import { reconcileEntities } from './reconciliation.ts';
-import { buildDataVerificationReport } from './verification.ts';
-import type { AdapterResult, PersistenceResult, SourceStatus, SyncReport, SyncRunRecord } from './types.ts';
+import type { SourceAdapter } from './adapter.js';
+import { buildCompletenessReport } from './completeness.js';
+import { persistEntities, type CanonicalDataRepository } from './repository.js';
+import { reconcileEntities } from './reconciliation.js';
+import { buildDataVerificationReport } from './verification.js';
+import type { AdapterResult, PersistenceResult, SourceStatus, SyncReport, SyncRunRecord } from './types.js';
 
 function aggregateStatus(results: AdapterResult[]): SourceStatus {
   if (results.some((result) => result.status === 'WORKING')) return results.every((result) => result.status === 'WORKING') ? 'WORKING' : 'PARTIAL';

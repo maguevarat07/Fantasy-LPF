@@ -1,8 +1,8 @@
 import * as cheerio from 'cheerio';
-import { buildResult, type SourceAdapter } from '../adapter.ts';
-import { fetchDocument, isLikelyBotBlock } from '../http.ts';
-import { cleanText, normalizeIdentity, normalizePosition, parseNullableInt, stableFallbackId } from '../normalization.ts';
-import type { NormalizedClub, NormalizedEntity, NormalizedPlayer, SourceObservation } from '../types.ts';
+import { buildResult, type SourceAdapter } from '../adapter.js';
+import { fetchDocument, isLikelyBotBlock } from '../http.js';
+import { cleanText, normalizeIdentity, normalizePosition, parseNullableInt, stableFallbackId } from '../normalization.js';
+import type { NormalizedClub, NormalizedEntity, NormalizedPlayer, SourceObservation } from '../types.js';
 
 const DEFAULT_URL = 'https://lpf.com.pa/list/plantilla/';
 const OFFICIAL_LPF_ROSTER_URLS = [

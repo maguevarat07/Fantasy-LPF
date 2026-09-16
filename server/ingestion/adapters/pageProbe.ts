@@ -1,7 +1,7 @@
 import * as cheerio from 'cheerio';
-import { buildResult, type SourceAdapter } from '../adapter.ts';
-import { fetchDocument, isLikelyBotBlock } from '../http.ts';
-import type { Source, SourceObservation } from '../types.ts';
+import { buildResult, type SourceAdapter } from '../adapter.js';
+import { fetchDocument, isLikelyBotBlock } from '../http.js';
+import type { Source, SourceObservation } from '../types.js';
 
 /**
  * A real, deliberately conservative adapter for sources whose public pages are

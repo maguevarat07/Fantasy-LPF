@@ -1,4 +1,4 @@
-import type { NormalizedClub, NormalizedLineupEntry, NormalizedMatch, NormalizedMatchEvent, NormalizedPlayer, NormalizedPlayerStat, PersistenceResult, SourceObservation, SyncRunRecord } from './types.ts';
+import type { NormalizedClub, NormalizedLineupEntry, NormalizedMatch, NormalizedMatchEvent, NormalizedPlayer, NormalizedPlayerStat, PersistenceResult, SourceObservation, SyncRunRecord } from './types.js';
 
 /**
  * Backend contract required by ingestion. Each upsert must use the external

@@ -1,5 +1,5 @@
-import { normalizeIdentity } from './normalization.ts';
-import type { IdentityConflict, NormalizedEntity, NormalizedPlayer, ReconciliationResult, Source } from './types.ts';
+import { normalizeIdentity } from './normalization.js';
+import type { IdentityConflict, NormalizedEntity, NormalizedPlayer, ReconciliationResult, Source } from './types.js';
 
 const SOURCE_PRIORITY: Record<Source, number> = { TRANSFERMARKT: 0, LPF: 1, SOCCERWAY: 2, FOTMOB: 3, '365SCORES': 4 };
 

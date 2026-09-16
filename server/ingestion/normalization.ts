@@ -1,4 +1,4 @@
-import type { FantasyPosition } from './types.ts';
+import type { FantasyPosition } from './types.js';
 
 const DIACRITICS = /[\u0300-\u036f]/g;
 

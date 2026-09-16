@@ -1,6 +1,6 @@
-import { buildResult, type SourceAdapter } from '../adapter.ts';
-import { fetchDocument, isLikelyBotBlock } from '../http.ts';
-import type { NormalizedEntity, NormalizedMatch, SourceObservation } from '../types.ts';
+import { buildResult, type SourceAdapter } from '../adapter.js';
+import { fetchDocument, isLikelyBotBlock } from '../http.js';
+import type { NormalizedEntity, NormalizedMatch, SourceObservation } from '../types.js';
 
 const DEFAULT_URL = 'https://es.soccerway.com/panama/lpf/';
 const BROWSER_USER_AGENT = process.env.SOCCERWAY_USER_AGENT

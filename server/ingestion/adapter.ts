@@ -1,4 +1,4 @@
-import type { AdapterResult, NormalizedEntity, Source, SourceObservation, SourceStatus } from './types.ts';
+import type { AdapterResult, NormalizedEntity, Source, SourceObservation, SourceStatus } from './types.js';
 
 export interface SourceAdapter {
   readonly source: Source;
