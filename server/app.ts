@@ -506,25 +506,25 @@ export function createApp(options: CreateAppOptions = {}) {
           tp.pricing_version AS pricingVersion, p.status, tp.active,
           COALESCE(stat.goals, 0) AS goals,
           COALESCE(stat.assists, 0) AS assists,
-          COALESCE(stat.yellowCards, 0) AS yellowCards,
-          COALESCE(stat.redCards, 0) AS redCards,
-          COALESCE(stat.ownGoals, 0) AS ownGoals,
-          COALESCE(stat.matchesPlayed, 0) AS matchesPlayed,
-          COALESCE(points.totalPoints, 0) AS totalPoints,
-          ROUND(COALESCE(latestPrice.recent_form, points.recentForm, 0)::numeric, 2) AS recentForm,
-          COALESCE(points.cleanSheets, 0) AS cleanSheets,
-          COALESCE(lastWeek.lastGwPoints, 0) AS lastGwPoints
+          COALESCE(stat.yellow_cards, 0) AS yellowCards,
+          COALESCE(stat.red_cards, 0) AS redCards,
+          COALESCE(stat.own_goals, 0) AS ownGoals,
+          COALESCE(stat.matches_played, 0) AS matchesPlayed,
+          COALESCE(points.total_points, 0) AS totalPoints,
+          ROUND(COALESCE(latestPrice.recent_form, points.recent_form, 0)::numeric, 2) AS recentForm,
+          COALESCE(points.clean_sheets, 0) AS cleanSheets,
+          COALESCE(last_week.last_gw_points, 0) AS lastGwPoints
         FROM tournament_players tp JOIN players p ON p.id = tp.player_id
         LEFT JOIN (
           SELECT player_id, SUM(goals) AS goals,
             SUM(CASE WHEN assist_status IN ('CONFIRMED', 'CORRECTED') THEN assists ELSE 0 END) AS assists,
-            SUM(yellow_cards) AS yellowCards, SUM(red_cards) AS redCards,
-            SUM(own_goals) AS ownGoals, COUNT(DISTINCT match_id) AS matchesPlayed
+            SUM(yellow_cards) AS yellow_cards, SUM(red_cards) AS red_cards,
+            SUM(own_goals) AS own_goals, COUNT(DISTINCT match_id) AS matches_played
           FROM player_match_stats GROUP BY player_id
         ) stat ON stat.player_id = p.id
         LEFT JOIN (
-          SELECT player_id, SUM(total_points) AS totalPoints, AVG(total_points) AS recentForm,
-            SUM(CASE WHEN clean_sheet_points > 0 THEN 1 ELSE 0 END) AS cleanSheets
+          SELECT player_id, SUM(total_points) AS total_points, AVG(total_points) AS recent_form,
+            SUM(CASE WHEN clean_sheet_points > 0 THEN 1 ELSE 0 END) AS clean_sheets
           FROM player_fantasy_points GROUP BY player_id
         ) points ON points.player_id = p.id
         LEFT JOIN player_price_history latestPrice
@@ -533,12 +533,12 @@ export function createApp(options: CreateAppOptions = {}) {
           AND latestPrice.gameweek_id = tp.last_calculated_gameweek_id
           AND latestPrice.formula_version = tp.pricing_version
         LEFT JOIN (
-          SELECT player_id, SUM(total_points) AS lastGwPoints FROM player_fantasy_points
+          SELECT player_id, SUM(total_points) AS last_gw_points FROM player_fantasy_points
           WHERE gameweek_id = (
             SELECT id FROM gameweeks WHERE tournament_id = ? AND status = 'FINISHED'
             ORDER BY week_number DESC LIMIT 1
           ) GROUP BY player_id
-        ) lastWeek ON lastWeek.player_id = p.id
+        ) last_week ON last_week.player_id = p.id
         WHERE tp.tournament_id = ? AND tp.active = TRUE AND p.active = TRUE ORDER BY p.name`).all(record.id, record.id);
       const historyRows = await db.prepare(`SELECT pph.player_id AS playerId,
           pph.gameweek_id AS gameweekId, gw.name AS gameweekName,
