@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import Database from 'better-sqlite3';
 import { createPostgresDatabase, type PostgresDatabase, type QueryRow, type SqlParameter } from '../server/postgres/client.js';
+import { createHttpPostgresDatabase } from './httpPostgresClient.js';
 
 interface TablePlan { name: string; primaryKey: string[] }
 
@@ -168,7 +169,7 @@ async function main(): Promise<void> {
   const allowExisting = args.has('--allow-existing');
   const sqlitePath = resolve(process.env.MIGRATION_SQLITE_PATH ?? process.env.DATABASE_PATH ?? 'data/fantasy-lpf.sqlite');
   const sqlite = new Database(sqlitePath, { readonly: true, fileMustExist: true });
-  const pg = createPostgresDatabase();
+  const pg = process.env.MIGRATION_HTTP_URL ? createHttpPostgresDatabase() : createPostgresDatabase();
   try {
     const integrity = sqlite.pragma('integrity_check') as Array<{ integrity_check: string }>;
     const foreignKeyErrors = sqlite.pragma('foreign_key_check') as unknown[];

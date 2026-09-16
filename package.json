@@ -23,7 +23,8 @@
     "sync:lpf": "tsx scripts/sync-lpf-data.ts",
     "score:lpf": "tsx scripts/recalculate-points.ts",
     "db:import:postgres": "tsx scripts/migrate-sqlite-to-postgres.ts",
-    "db:validate:postgres": "tsx scripts/migrate-sqlite-to-postgres.ts --validate-only"
+    "db:validate:postgres": "tsx scripts/migrate-sqlite-to-postgres.ts --validate-only",
+    "db:migrate:postgres": "tsx scripts/apply-postgres-migrations.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

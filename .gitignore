@@ -12,3 +12,4 @@ data/*.db
 data/*.db-*
 .claude/settings.local.json
 data/backups/
+.tmp/

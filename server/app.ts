@@ -1,7 +1,7 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import cookieParser from 'cookie-parser';
 import bcrypt from 'bcryptjs';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z, ZodError } from 'zod';
@@ -116,6 +116,20 @@ const chipSchema = z.object({
   gameweekId: z.string().trim().min(1).max(80),
   chipId: z.enum(['wildcard', 'triple_cap', 'bench_boost', 'emergency_fund']),
 }).strict();
+
+const migrationParameterSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const migrationQuerySchema = z.object({
+  text: z.string().min(1).max(8_000_000),
+  parameters: z.array(migrationParameterSchema).max(100_000).optional().default([]),
+}).strict();
+const migrationRequestSchema = z.union([
+  migrationQuerySchema.extend({ mode: z.literal('query') }),
+  migrationQuerySchema.extend({ mode: z.literal('execute') }),
+  z.object({
+    mode: z.literal('transaction'),
+    statements: z.array(migrationQuerySchema).min(1).max(10),
+  }).strict(),
+]);
 
 interface AuthenticatedRequest extends Request {
   auth?: { userId: string; sessionId: string };
@@ -399,6 +413,42 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use(express.json({ limit: '8mb' }));
   app.use(cookieParser());
   app.locals.db = rawDatabase;
+
+  const migrationDatabase = options.postgresDb;
+  if (migrationDatabase && process.env.ENABLE_MIGRATION_ENDPOINT === 'true') {
+    app.post('/api/admin/migrate', async (req, res, next) => {
+      try {
+        const expected = process.env.MIGRATION_SECRET ?? process.env.CRON_SECRET ?? '';
+        const provided = req.get('authorization')?.replace(/^Bearer\s+/i, '') ?? '';
+        const expectedBytes = Buffer.from(expected);
+        const providedBytes = Buffer.from(provided);
+        const authorized = expectedBytes.length > 0
+          && expectedBytes.length === providedBytes.length
+          && timingSafeEqual(expectedBytes, providedBytes);
+        if (!authorized) throw new ApiError(401, 'UNAUTHORIZED', 'Credencial de migración inválida.');
+
+        const request = migrationRequestSchema.parse(req.body);
+        if (request.mode === 'query') {
+          const rows = await migrationDatabase.query(request.text, request.parameters);
+          return res.json({ rows });
+        }
+        if (request.mode === 'execute') {
+          const count = await migrationDatabase.execute(request.text, request.parameters);
+          return res.json({ count });
+        }
+        const results = await migrationDatabase.transaction(async tx => {
+          const counts: number[] = [];
+          for (const statement of request.statements) {
+            counts.push(await tx.execute(statement.text, statement.parameters));
+          }
+          return counts;
+        });
+        return res.json({ counts: results });
+      } catch (error) {
+        return next(error);
+      }
+    });
+  }
   const authAttempts = new Map<string, { count: number; resetAt: number }>();
   const authRateLimit = (req: Request, res: Response, next: NextFunction) => {
     const key = req.ip || req.socket.remoteAddress || 'unknown';
