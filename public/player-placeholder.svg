@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 400" role="img" aria-label="Jugador sin foto">
+  <rect width="320" height="400" fill="#d1d5db"/>
+  <circle cx="160" cy="125" r="64" fill="#9ca3af"/>
+  <path d="M48 368c8-96 48-146 112-146s104 50 112 146" fill="#9ca3af"/>
+</svg>

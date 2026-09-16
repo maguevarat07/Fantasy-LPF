@@ -1,0 +1,6 @@
+{
+  "name": "Fantasy LPF",
+  "description": "Aplicación oficial de Fantasy Football para la Liga Panameña de Fútbol (LPF) con gestión táctica de plantilla, mercado, transferencias, capitanía y ligas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

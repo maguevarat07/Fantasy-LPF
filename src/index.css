@@ -1,0 +1,220 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface-tint: #00e299;
+  --color-on-surface: #dee2f6;
+  --color-on-error-container: #ffdad6;
+  --color-inverse-primary: #006c47;
+  --color-on-surface-variant: #bacbbe;
+  --color-surface-container-highest: #303444;
+  --color-surface-variant: #303444;
+  --color-primary-fixed-dim: #00e299;
+  --color-on-tertiary-fixed-variant: #920024;
+  --color-tertiary: #ffdedd;
+  --color-tertiary-fixed-dim: #ffb3b4;
+  --color-outline-variant: #3b4a41;
+  --color-on-secondary-fixed: #001e2b;
+  --color-tertiary-container: #ffb7b8;
+  --color-secondary-fixed-dim: #75d1ff;
+  --color-secondary: #8fd8ff;
+  --color-on-tertiary-fixed: #40000a;
+  --color-outline: #849589;
+  --color-surface-dim: #0e1321;
+  --color-on-primary-container: #00613f;
+  --color-background: #0e1321;
+  --color-error: #ffb4ab;
+  --color-primary-fixed: #4bffb4;
+  --color-on-error: #690005;
+  --color-inverse-on-surface: #2b303f;
+  --color-tertiary-fixed: #ffdad9;
+  --color-primary-container: #00e59b;
+  --color-surface-container-lowest: #090e1c;
+  --color-on-primary: #003823;
+  --color-on-secondary-fixed-variant: #004d67;
+  --color-primary: #6dffbb;
+  --color-on-tertiary-container: #ac002c;
+  --color-on-primary-fixed: #002113;
+  --color-surface-bright: #343948;
+  --color-surface-container-high: #252a39;
+  --color-surface-container: #1a1f2e;
+  --color-on-secondary: #003548;
+  --color-on-primary-fixed-variant: #005234;
+  --color-inverse-surface: #dee2f6;
+  --color-surface-container-low: #161b2a;
+  --color-error-container: #93000a;
+  --color-on-secondary-container: #004b65;
+  --color-secondary-container: #00c1fd;
+  --color-surface: #0e1321;
+  --color-secondary-fixed: #c2e8ff;
+  --color-on-background: #dee2f6;
+  --color-on-tertiary: #680017;
+
+  --spacing-space-2xs: 0.25rem;
+  --spacing-space-xs: 0.5rem;
+  --spacing-space-sm: 0.75rem;
+  --spacing-space-md: 1rem;
+  --spacing-space-lg: 1.5rem;
+  --spacing-space-xl: 2rem;
+  --spacing-space-2xl: 3rem;
+  --spacing-space-3xl: 4rem;
+  --spacing-gutter-mobile: 1rem;
+  --spacing-gutter-desktop: 1.5rem;
+  --spacing-field-margin: 1.25rem;
+  --spacing-pitch-unit: 0.25rem;
+}
+
+@layer base {
+  html, body {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    background-color: #0e1321;
+    color: #dee2f6;
+    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+    overscroll-behavior: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 16px);
+  }
+
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+}
+
+/* Typography styles matching Google Stitch definitions */
+.font-headline-lg {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 32px;
+  line-height: 34px;
+  letter-spacing: 0.01em;
+  font-weight: 700;
+}
+.font-headline-lg-mobile {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 26px;
+  line-height: 28px;
+  letter-spacing: 0.01em;
+  font-weight: 700;
+}
+.font-headline-md {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 22px;
+  line-height: 24px;
+  letter-spacing: 0.02em;
+  font-weight: 700;
+}
+.font-headline-sm {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 18px;
+  line-height: 20px;
+  letter-spacing: 0.03em;
+  font-weight: 600;
+}
+.font-display-lg {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 48px;
+  line-height: 48px;
+  letter-spacing: -0.02em;
+  font-weight: 800;
+}
+.font-display-lg-mobile {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 36px;
+  line-height: 38px;
+  letter-spacing: -0.01em;
+  font-weight: 800;
+}
+.font-stat-counter {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 40px;
+  line-height: 40px;
+  letter-spacing: -0.01em;
+  font-weight: 800;
+}
+.font-label-lg {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 15px;
+  line-height: 16px;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+.font-label-md {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 12px;
+  line-height: 14px;
+  letter-spacing: 0.02em;
+  font-weight: 600;
+}
+.font-label-sm {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 10px;
+  line-height: 12px;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+}
+.font-title-md {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 16px;
+  line-height: 22px;
+  letter-spacing: -0.01em;
+  font-weight: 700;
+}
+.font-body-lg {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+}
+.font-body-md {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+}
+.font-body-sm {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+}
+
+/* Material Symbols configuration */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 1;
+}
+
+/* Scrollbar utilities */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Landing page motion */
+@keyframes lpf-up { from { opacity: 0; transform: translateY(18px) } to { opacity: 1; transform: none } }
+@keyframes lpf-marquee { from { transform: translateX(0) } to { transform: translateX(-50%) } }
+@keyframes lpf-pulse { 0%, 100% { opacity: 1; transform: scale(1) } 50% { opacity: .35; transform: scale(.82) } }
+@keyframes lpf-beam { 0%, 100% { opacity: .5 } 45% { opacity: .85 } }
+@keyframes lpf-sweep { from { transform: translateX(-120%) } to { transform: translateX(320%) } }
+
+.animate-lpf-up { animation: lpf-up .7s cubic-bezier(.2,.7,.3,1) both; }
+.animate-lpf-marquee { animation: lpf-marquee 42s linear infinite; }
+.animate-lpf-pulse { animation: lpf-pulse 1.8s ease-in-out infinite; }
+.animate-lpf-beam { animation: lpf-beam 7s ease-in-out infinite; }
+.animate-lpf-sweep { animation: lpf-sweep 3.4s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-lpf-up, .animate-lpf-marquee, .animate-lpf-pulse, .animate-lpf-beam, .animate-lpf-sweep {
+    animation: none;
+  }
+}
+
