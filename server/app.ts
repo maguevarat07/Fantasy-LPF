@@ -511,7 +511,7 @@ export function createApp(options: CreateAppOptions = {}) {
           COALESCE(stat.ownGoals, 0) AS ownGoals,
           COALESCE(stat.matchesPlayed, 0) AS matchesPlayed,
           COALESCE(points.totalPoints, 0) AS totalPoints,
-          ROUND(COALESCE(latestPrice.recent_form, points.recentForm, 0), 2) AS recentForm,
+          ROUND(COALESCE(latestPrice.recent_form, points.recentForm, 0)::numeric, 2) AS recentForm,
           COALESCE(points.cleanSheets, 0) AS cleanSheets,
           COALESCE(lastWeek.lastGwPoints, 0) AS lastGwPoints
         FROM tournament_players tp JOIN players p ON p.id = tp.player_id

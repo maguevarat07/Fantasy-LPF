@@ -58,6 +58,30 @@ const JSON_COLUMNS = new Set([
   'onboarding_drafts.bench_json', 'pricing_runs.config_json',
 ]);
 
+// The local QA account predates the canonical LPF club import and stores the
+// old short identifier. Preserve the user's choice while moving to the real
+// club primary key used by the canonical catalog.
+const LEGACY_CLUB_IDS: Readonly<Record<string, string>> = {
+  tau: '1655a8ae-7610-4853-90e4-d2a4b6baa6f5',
+};
+
+const SPANISH_MONTHS: Readonly<Record<string, string>> = {
+  enero: '01', febrero: '02', marzo: '03', abril: '04', mayo: '05', junio: '06',
+  julio: '07', agosto: '08', septiembre: '09', octubre: '10', noviembre: '11', diciembre: '12',
+};
+
+function postgresDate(value: string): string | null {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const match = /^([a-záéíóú]+)\s+(\d{1,2}),\s*(\d{4})$/i.exec(value.trim());
+  if (!match) return null;
+  const month = SPANISH_MONTHS[match[1].toLocaleLowerCase('es')];
+  const year = Number(match[3]);
+  // Several LPF pages expose the article publication date in this field. A
+  // 2022-2024 value cannot be a senior player's birth date, so keep it unknown.
+  if (!month || year > 2010) return null;
+  return `${year}-${month}-${match[2].padStart(2, '0')}`;
+}
+
 const AGGREGATES: Readonly<Record<string, readonly string[]>> = {
   tournaments: ['budget_cents'], fantasy_teams: ['bank_cents', 'total_points', 'gameweek_points'],
   squad_players: ['purchase_price_cents'], tournament_players: ['price_cents', 'initial_price_cents', 'fair_price_cents', 'last_change_cents'],
@@ -79,6 +103,10 @@ function sqliteColumns(db: Database.Database, table: string): string[] {
 function transformValue(table: string, column: string, value: unknown): SqlParameter {
   if (value === null || value === undefined) return null;
   const key = `${table}.${column}`;
+  if (key === 'profiles.favorite_club_id' && typeof value === 'string') {
+    return LEGACY_CLUB_IDS[value] ?? value;
+  }
+  if (key === 'players.date_of_birth' && typeof value === 'string') return postgresDate(value);
   if (BOOLEAN_COLUMNS.has(key)) return Boolean(value);
   if (JSON_COLUMNS.has(key)) {
     const parsed = typeof value === 'string' ? JSON.parse(value) : value;
@@ -118,11 +146,12 @@ async function insertTable(sqlite: Database.Database, pg: PostgresDatabase, tabl
   const columns = sqliteColumns(sqlite, table.name);
   const rows = sqlite.prepare(`select * from ${identifier(table.name)}`).all() as Array<Record<string, unknown>>;
   if (!rows.length) return 0;
-  const batchSize = 250;
+  const batchSize = Math.max(1, Number(process.env.MIGRATION_BATCH_SIZE ?? 250));
   let inserted = 0;
   for (let offset = 0; offset < rows.length; offset += batchSize) {
     const batch = rows.slice(offset, offset + batchSize);
-    await pg.transaction(async tx => {
+    try {
+      await pg.transaction(async tx => {
       const parameters: SqlParameter[] = [];
       const tuples = batch.map(row => {
         const placeholders = columns.map(column => {
@@ -136,7 +165,13 @@ async function insertTable(sqlite: Database.Database, pg: PostgresDatabase, tabl
         parameters,
       );
       inserted += count;
-    });
+      });
+    } catch (error) {
+      throw new Error(
+        `Falló ${table.name} en filas ${offset + 1}-${offset + batch.length}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
   }
   return inserted;
 }
