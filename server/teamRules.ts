@@ -1,4 +1,5 @@
 import type { ApplicationDatabase } from './applicationDatabase.js';
+import { moneyCents } from './money.js';
 
 export const POSITIONS = ['GK', 'DEF', 'MID', 'FWD'] as const;
 export type Position = (typeof POSITIONS)[number];
@@ -44,7 +45,7 @@ export async function loadTournamentPlayers(
   `).all(tournamentId, ...playerIds) as unknown as PlayerRow[];
   return rows.map(player => ({
     ...player,
-    price_cents: Number(player.price_cents),
+    price_cents: moneyCents(player.price_cents, 'tournament_players.price_cents'),
     active: Boolean(player.active),
   }));
 }

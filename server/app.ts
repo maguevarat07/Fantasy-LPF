@@ -16,6 +16,7 @@ import {
   validateSquad,
 } from './teamRules.js';
 import { ownershipPriceQuote } from './marketEconomy.js';
+import { moneyCents, nullableMoneyCents } from './money.js';
 
 const SESSION_COOKIE = 'fantasy_lpf_session';
 const SESSION_DAYS = 30;
@@ -299,7 +300,10 @@ async function serializeTeam(db: ApplicationDatabase, team: Record<string, unkno
   `).all(team.tournament_id, team.id) as Array<Record<string, unknown>>;
   const squadWithEconomy = squad.map(player => ({
     ...player,
-    ...ownershipPriceQuote(Number(player.purchasePriceCents), Number(player.currentPriceCents)),
+    ...ownershipPriceQuote(
+      moneyCents(player.purchasePriceCents, 'squad_players.purchase_price_cents'),
+      moneyCents(player.currentPriceCents, 'tournament_players.price_cents'),
+    ),
   }));
   const currentMarketValueCents = squadWithEconomy.reduce(
     (sum, player) => sum + player.currentPriceCents, 0,
@@ -340,32 +344,38 @@ async function serializeTeam(db: ApplicationDatabase, team: Record<string, unkno
     tournamentId: team.tournament_id,
     name: team.name,
     formation: team.formation,
-    bankCents: team.bank_cents,
+    bankCents: moneyCents(team.bank_cents, 'fantasy_teams.bank_cents'),
     totalPoints: team.total_points,
     gameweekPoints: team.gameweek_points,
     freeTransfers: team.free_transfers,
     transferPenaltyPoints: team.transfer_penalty_points,
-    transferHistory: transferHistory.map(item => ({
+    transferHistory: transferHistory.map(item => {
+      const purchasePrice = nullableMoneyCents(item.purchasePriceCents, 'transfer_items.purchase_price_cents');
+      const profitLoss = nullableMoneyCents(item.profitLossCents, 'transfer_items.profit_loss_cents', true);
+      const sellPrice = moneyCents(item.sellPriceCents, 'transfer_items.sell_price_cents');
+      const buyPrice = moneyCents(item.buyPriceCents, 'transfer_items.buy_price_cents');
+      return {
       id: item.id, gameweek: item.gameweek,
       dateStr: new Date(String(item.createdAt)).toLocaleString('es-PA'),
       playerOutName: item.playerOutName, playerOutClub: item.playerOutClub ?? '',
-      playerOutPos: item.playerOutPosition, playerOutPrice: Number(item.sellPriceCents) / 100_000_000,
-      purchasePrice: item.purchasePriceCents == null ? undefined : Number(item.purchasePriceCents) / 100_000_000,
-      sellingPrice: Number(item.sellPriceCents) / 100_000_000,
-      profitLoss: item.profitLossCents == null ? undefined : Number(item.profitLossCents) / 100_000_000,
+      playerOutPos: item.playerOutPosition, playerOutPrice: sellPrice / 100_000_000,
+      purchasePrice: purchasePrice == null ? undefined : purchasePrice / 100_000_000,
+      sellingPrice: sellPrice / 100_000_000,
+      profitLoss: profitLoss == null ? undefined : profitLoss / 100_000_000,
       purchaseGameweek: item.purchaseGameweekId ?? undefined,
       saleGameweek: item.gameweek,
       playerInName: item.playerInName, playerInClub: item.playerInClub ?? '',
-      playerInPos: item.playerInPosition, playerInPrice: Number(item.buyPriceCents) / 100_000_000,
-      balanceDiff: (Number(item.sellPriceCents) - Number(item.buyPriceCents)) / 100_000_000,
+      playerInPos: item.playerInPosition, playerInPrice: buyPrice / 100_000_000,
+      balanceDiff: (sellPrice - buyPrice) / 100_000_000,
       pointsCost: -Number(item.pointsCost), isFreeTransfer: Number(item.pointsCost) === 0,
-    })),
+      };
+    }),
     squad: squadWithEconomy,
     economy: {
       currentMarketValueCents,
       sellingSquadValueCents,
-      bankCents: Number(team.bank_cents),
-      totalAvailableValueCents: Number(team.bank_cents) + sellingSquadValueCents,
+      bankCents: moneyCents(team.bank_cents, 'fantasy_teams.bank_cents'),
+      totalAvailableValueCents: moneyCents(team.bank_cents, 'fantasy_teams.bank_cents') + sellingSquadValueCents,
     },
     lineup: lineup ? {
       gameweekId: (lineup as Record<string, unknown>).gameweek_id,
@@ -989,9 +999,9 @@ export function createApp(options: CreateAppOptions = {}) {
       if (new Set(outIds).size !== outIds.length || new Set(inIds).size !== inIds.length || outIds.some(id => inIds.includes(id))) {
         throw new TeamRuleError('Los cambios no pueden repetir ni cruzar jugadores.');
       }
-      const current = await db.prepare(`SELECT sp.player_id, sp.purchase_price_cents, p.position
+      const current = await db.prepare(`SELECT sp.player_id, p.position
         FROM squad_players sp JOIN players p ON p.id = sp.player_id WHERE sp.fantasy_team_id = ?`)
-        .all(team.id) as { player_id: string; purchase_price_cents: number; position: z.infer<typeof POSITION> }[];
+        .all(team.id) as { player_id: string; position: z.infer<typeof POSITION> }[];
       const currentIds = new Set(current.map(row => row.player_id));
       if (outIds.some(id => !currentIds.has(id)) || inIds.some(id => currentIds.has(id))) {
         throw new TeamRuleError('La transferencia contiene jugadores que no corresponden a tu plantilla.');
@@ -1017,16 +1027,20 @@ export function createApp(options: CreateAppOptions = {}) {
         await db.prepare('SELECT id FROM fantasy_teams WHERE id = ? /* FOR_UPDATE */').get(team.id);
         // Prices and ownership are loaded again under the write transaction. These
         // values, rather than an earlier catalog response, authorize the operation.
-        const freshCurrent = await db.prepare(`SELECT sp.player_id, sp.purchase_price_cents,
+        const freshCurrentRows = await db.prepare(`SELECT sp.player_id, sp.purchase_price_cents,
             sp.purchase_gameweek_id, p.position, tp.price_cents AS current_price_cents
           FROM squad_players sp
           JOIN players p ON p.id = sp.player_id
           JOIN tournament_players tp ON tp.player_id = sp.player_id AND tp.tournament_id = ?
           WHERE sp.fantasy_team_id = ?`)
-          .all(input.tournamentId, team.id) as Array<{
-            player_id: string; purchase_price_cents: number; purchase_gameweek_id: string | null;
-            current_price_cents: number; position: z.infer<typeof POSITION>;
-          }>;
+          .all(input.tournamentId, team.id) as Array<Record<string, unknown>>;
+        const freshCurrent = freshCurrentRows.map(player => ({
+          player_id: String(player.player_id),
+          purchase_price_cents: moneyCents(player.purchase_price_cents, 'squad_players.purchase_price_cents'),
+          purchase_gameweek_id: player.purchase_gameweek_id == null ? null : String(player.purchase_gameweek_id),
+          current_price_cents: moneyCents(player.current_price_cents, 'tournament_players.price_cents'),
+          position: player.position as z.infer<typeof POSITION>,
+        }));
         const freshCurrentById = new Map(freshCurrent.map(player => [player.player_id, player]));
         if (outIds.some(id => !freshCurrentById.has(id)) || inIds.some(id => freshCurrentById.has(id))) {
           throw new TeamRuleError('La plantilla cambió antes de confirmar la transferencia.');
@@ -1052,11 +1066,11 @@ export function createApp(options: CreateAppOptions = {}) {
         const finalIds = freshCurrent.map(row => row.player_id).filter(id => !outIds.includes(id)).concat(inIds);
         validateSquad(await loadTournamentPlayers(db, input.tournamentId, finalIds));
 
-        const bankBefore = Number((await db.prepare('SELECT bank_cents FROM fantasy_teams WHERE id = ?')
-          .get(team.id) as { bank_cents: number }).bank_cents);
+        const bankBefore = moneyCents((await db.prepare('SELECT bank_cents FROM fantasy_teams WHERE id = ?')
+          .get(team.id))?.bank_cents, 'fantasy_teams.bank_cents');
         const sellTotal = [...quotes.values()].reduce((sum, value) => sum + value.quote.sellingPriceCents, 0);
         const buyTotal = [...quotes.values()].reduce((sum, value) => sum + value.incomingPlayer.price_cents, 0);
-        const bankAfter = bankBefore + sellTotal - buyTotal;
+        const bankAfter = moneyCents(bankBefore + sellTotal - buyTotal, 'transfer bank_after_cents', true);
         if (bankAfter < 0) throw new TeamRuleError('No tienes presupuesto suficiente con los precios actuales.');
 
         await db.prepare(`INSERT INTO transfers
