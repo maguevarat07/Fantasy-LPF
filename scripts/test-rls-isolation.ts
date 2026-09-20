@@ -23,6 +23,13 @@ async function run() {
       check(!security.bypass && security.policies >= 35, 'rol sin BYPASSRLS y políticas instaladas');
       check(!security.anon && !security.authenticated, 'migraciones cerradas a anon/authenticated');
       check(!security.publicWrite, 'catálogo deportivo sin escritura desde rol app');
+      const jobAccess = await tx.one<{ role: string; canSync: boolean; canScore: boolean; canPrice: boolean }>(`
+        select current_user as role,
+          has_table_privilege(current_user,'public.sync_runs','SELECT,INSERT,UPDATE') as "canSync",
+          has_table_privilege(current_user,'public.player_fantasy_points','SELECT,INSERT,UPDATE') as "canScore",
+          has_table_privilege(current_user,'public.pricing_runs','SELECT,INSERT,UPDATE') as "canPrice"`);
+      check(jobAccess.role === 'postgres' && jobAccess.canSync && jobAccess.canScore && jobAccess.canPrice,
+        'rol interno conserva privilegios de sync, scoring y pricing');
       const tournament = await tx.one<{ id: string }>('select id from tournaments limit 1');
       const gameweek = await tx.one<{ id: string }>('select id from gameweeks where tournament_id=$1 limit 1', [tournament.id]);
       const players = await tx.query<{ id: string }>('select id from players limit 2');
