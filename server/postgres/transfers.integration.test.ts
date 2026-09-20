@@ -62,6 +62,12 @@ describe.skipIf(!testUrl)('transferencias contra PostgreSQL real en esquema aisl
     if (current.name !== schema) throw new Error(`El esquema de prueba no está aislado: ${current.name}.`);
     const migration = await readFile('supabase/migrations/202609150001_initial_schema.sql', 'utf8');
     await db.execute(migration);
+    await db.execute('create table app_schema_migrations(version text primary key, checksum text not null, applied_at timestamptz not null default now())');
+    const rlsMigration = await readFile('supabase/migrations/202609190001_rls_isolation.sql', 'utf8');
+    // Preserve production while exercising the same policy definitions inside
+    // this disposable QA schema. All explicit public table references are scoped.
+    await db.execute(rlsMigration.replaceAll('public.', `"${schema}".`));
+    await db.execute(`grant usage on schema "${schema}" to fantasy_lpf_app`);
   }, 120_000);
 
   beforeEach(async () => {
@@ -133,6 +139,26 @@ describe.skipIf(!testUrl)('transferencias contra PostgreSQL real en esquema aisl
     }).expect(422);
     expect(duplicate.body.error.code).toBe('TEAM_RULE_VIOLATION');
     expect((await db.one<{ count: number }>('select count(*)::int as count from transfers where fantasy_team_id=$1', [ana.teamId])).count).toBe(1);
+  }, 120_000);
+
+  it('mantiene ligas privadas y datos deportivos con el rol RLS restringido', async () => {
+    const ana = await createManager('ana');
+    const beto = await createManager('beto');
+    const catalog = await ana.agent.get('/api/catalog?tournamentId=qa-tournament').expect(200);
+    expect(catalog.body.players.length).toBeGreaterThan(15);
+    const created = await ana.agent.post('/api/leagues').send({
+      tournamentId: 'qa-tournament', name: 'Liga RLS QA',
+    }).expect(201);
+    const code = created.body.league.code as string;
+    await beto.agent.post('/api/leagues/join').send({ code }).expect(201);
+    const leagues = await beto.agent.get('/api/leagues?tournamentId=qa-tournament').expect(200);
+    expect(leagues.body.leagues).toHaveLength(1);
+    const leaderboard = await ana.agent.get(`/api/leagues/${created.body.league.id}/leaderboard`).expect(200);
+    expect(leaderboard.body.leaderboard).toHaveLength(2);
+    expect(leaderboard.body.leaderboard.some((entry: { fantasyTeamId: string }) => entry.fantasyTeamId === beto.teamId)).toBe(true);
+    await beto.agent.delete(`/api/leagues/${created.body.league.id}/membership`).expect(204);
+    const after = await ana.agent.get(`/api/leagues/${created.body.league.id}/leaderboard`).expect(200);
+    expect(after.body.leaderboard).toHaveLength(1);
   }, 120_000);
 
   it('aplica -4 al batch adicional y el comodín conserva la transferencia gratuita', async () => {

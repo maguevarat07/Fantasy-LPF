@@ -199,18 +199,18 @@ function clearSessionCookie(res: Response, secure: boolean): void {
   res.clearCookie(SESSION_COOKIE, { httpOnly: true, secure, sameSite: 'lax', path: '/' });
 }
 
-function authMiddleware(db: ApplicationDatabase) {
+function authMiddleware(authDb: ApplicationDatabase, userDb: ApplicationDatabase) {
   return async (req: AuthenticatedRequest, _res: Response, next: NextFunction): Promise<void> => {
     const rawToken = req.cookies?.[SESSION_COOKIE];
     if (typeof rawToken !== 'string' || rawToken.length < 20) return next(new ApiError(401, 'UNAUTHENTICATED', 'Debes iniciar sesión.'));
-    const session = await db.prepare(`
+    const session = await authDb.prepare(`
       SELECT id, user_id FROM sessions
       WHERE token_hash = ? AND expires_at > ?
     `).get(tokenHash(rawToken), now()) as { id: string; user_id: string } | undefined;
     if (!session) return next(new ApiError(401, 'UNAUTHENTICATED', 'La sesión no existe o expiró.'));
     req.auth = { userId: session.user_id, sessionId: session.id };
-    await db.prepare('UPDATE sessions SET last_seen_at = ? WHERE id = ?').run(now(), session.id);
-    next();
+    await authDb.prepare('UPDATE sessions SET last_seen_at = ? WHERE id = ?').run(now(), session.id);
+    userDb.withUser(session.user_id, () => next());
   };
 }
 
@@ -402,19 +402,26 @@ async function replaceLineup(db: ApplicationDatabase, teamId: string, input: z.i
   for (const [slot, playerId] of input.bench.entries()) await insert.run(teamId, input.gameweekId, playerId, 'BENCH', slot);
 }
 
-async function uniqueLeagueCode(db: ApplicationDatabase): Promise<string> {
+async function uniqueLeagueCode(db: ApplicationDatabase, postgresRls: boolean): Promise<string> {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const bytes = randomBytes(6);
     const code = [...bytes].map(value => alphabet[value % alphabet.length]).join('');
-    if (!await db.prepare('SELECT 1 FROM leagues WHERE code = ?').get(code)) return code;
+    const exists = postgresRls
+      ? (await db.prepare('SELECT app_league_code_exists(?) AS found').get(code))?.found
+      : await db.prepare('SELECT 1 FROM leagues WHERE code = ?').get(code);
+    if (!exists) return code;
   }
   throw new ApiError(503, 'CODE_GENERATION_FAILED', 'No fue posible generar el código de liga.');
 }
 
 export function createApp(options: CreateAppOptions = {}) {
   const rawDatabase = options.postgresDb ?? options.db ?? openDatabase({ filename: options.dbPath });
-  const db = applicationDatabase(rawDatabase);
+  const db = applicationDatabase(rawDatabase, { enforceRls: Boolean(options.postgresDb) });
+  // Credential/session operations are deliberately isolated from the restricted
+  // business connection; only a validated session enters the RLS user context.
+  const authDb = applicationDatabase(rawDatabase);
+  const postgresRls = Boolean(options.postgresDb);
   const secureCookies = options.secureCookies ?? process.env.NODE_ENV === 'production';
   const sessionDays = options.sessionDays ?? SESSION_DAYS;
   const app = express();
@@ -580,10 +587,12 @@ export function createApp(options: CreateAppOptions = {}) {
         LPF: 'NOT_VERIFIED', TRANSFERMARKT: 'NOT_VERIFIED', SOCCERWAY: 'NOT_VERIFIED',
         '365SCORES': 'NOT_VERIFIED', FOTMOB: 'NOT_VERIFIED',
       };
-      const sourceRuns = await db.prepare(`SELECT sr.source, sr.status, sr.finished_at AS finishedAt
-        FROM sync_runs sr JOIN (
-          SELECT source, MAX(finished_at) AS finished_at FROM sync_runs WHERE source <> 'ALL' GROUP BY source
-        ) latest ON latest.source = sr.source AND latest.finished_at = sr.finished_at`).all() as
+      const sourceRuns = await db.prepare(postgresRls
+        ? 'SELECT * FROM app_catalog_source_runs()'
+        : `SELECT sr.source, sr.status, sr.finished_at AS finishedAt
+          FROM sync_runs sr JOIN (
+            SELECT source, MAX(finished_at) AS finished_at FROM sync_runs WHERE source <> 'ALL' GROUP BY source
+          ) latest ON latest.source = sr.source AND latest.finished_at = sr.finished_at`).all() as
         Array<{ source: string; status: string; finishedAt: string }>;
       sourceRuns.forEach(run => { sourcesStatus[run.source] = run.status; });
       const lastSyncTimestamp = sourceRuns.map(run => run.finishedAt).sort().at(-1) ?? '';
@@ -621,16 +630,16 @@ export function createApp(options: CreateAppOptions = {}) {
       const passwordHash = bcrypt.hashSync(input.password, 12);
       const userId = randomUUID();
       const timestamp = now();
-      const session = await db.transaction(async () => {
-        await db.prepare(`INSERT INTO users (id, email, username, password_hash, created_at, updated_at)
+      const session = await authDb.transaction(async () => {
+        await authDb.prepare(`INSERT INTO users (id, email, username, password_hash, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?)`)
           .run(userId, input.email.toLowerCase(), input.username, passwordHash, timestamp, timestamp);
-        await db.prepare(`INSERT INTO profiles (user_id, manager_name, updated_at) VALUES (?, ?, ?)`)
+        await authDb.prepare(`INSERT INTO profiles (user_id, manager_name, updated_at) VALUES (?, ?, ?)`)
           .run(userId, input.managerName, timestamp);
-        return issueSession(db, userId, sessionDays);
+        return issueSession(authDb, userId, sessionDays);
       })();
       setSessionCookie(res, session.token, session.expiresAt, secureCookies);
-      res.status(201).json({ success: true, user: await getMe(db, userId) });
+      res.status(201).json({ success: true, user: await getMe(authDb, userId) });
     } catch (error) { next(error); }
   });
 
@@ -638,28 +647,28 @@ export function createApp(options: CreateAppOptions = {}) {
     try {
       const input = loginSchema.parse(req.body);
       const identifier = input.email.replace(/^@/, '');
-      const user = await db.prepare(`SELECT id, password_hash FROM users
+      const user = await authDb.prepare(`SELECT id, password_hash FROM users
         WHERE email = ? COLLATE NOCASE OR username = ? COLLATE NOCASE`)
         .get(identifier, identifier) as { id: string; password_hash: string } | undefined;
       if (!user || !bcrypt.compareSync(input.password, user.password_hash)) {
         throw new ApiError(401, 'INVALID_CREDENTIALS', 'Correo, usuario o contraseña incorrectos.');
       }
-      const session = await issueSession(db, user.id, sessionDays);
+      const session = await issueSession(authDb, user.id, sessionDays);
       setSessionCookie(res, session.token, session.expiresAt, secureCookies);
-      res.json({ success: true, user: await getMe(db, user.id) });
+      res.json({ success: true, user: await getMe(authDb, user.id) });
     } catch (error) { next(error); }
   });
 
   app.post('/api/auth/logout', async (req, res, next) => {
     try {
       const rawToken = req.cookies?.[SESSION_COOKIE];
-      if (typeof rawToken === 'string') await db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash(rawToken));
+      if (typeof rawToken === 'string') await authDb.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash(rawToken));
       clearSessionCookie(res, secureCookies);
       res.status(204).send();
     } catch (error) { next(error); }
   });
 
-  const authenticated = authMiddleware(db);
+  const authenticated = authMiddleware(authDb, db);
 
   app.get('/api/me', authenticated, async (req: AuthenticatedRequest, res, next) => {
     try { res.json({ success: true, user: await getMe(db, requireUser(req).userId) }); } catch (error) { next(error); }
@@ -669,14 +678,14 @@ export function createApp(options: CreateAppOptions = {}) {
     try {
       const input = changePasswordSchema.parse(req.body);
       const { userId } = requireUser(req);
-      const row = await db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId) as { password_hash: string } | undefined;
+      const row = await authDb.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId) as { password_hash: string } | undefined;
       if (!row || !bcrypt.compareSync(input.currentPassword, row.password_hash)) {
         throw new ApiError(401, 'INVALID_CURRENT_PASSWORD', 'La contraseña actual no es correcta.');
       }
       const passwordHash = bcrypt.hashSync(input.newPassword, 12);
-      await db.transaction(async () => {
-        await db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(passwordHash, now(), userId);
-        await db.prepare('DELETE FROM sessions WHERE user_id = ? AND id <> ?').run(userId, requireUser(req).sessionId);
+      await authDb.transaction(async () => {
+        await authDb.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(passwordHash, now(), userId);
+        await authDb.prepare('DELETE FROM sessions WHERE user_id = ? AND id <> ?').run(userId, requireUser(req).sessionId);
       })();
       res.json({ success: true });
     } catch (error) { next(error); }
@@ -881,15 +890,17 @@ export function createApp(options: CreateAppOptions = {}) {
   app.get('/api/leagues', authenticated, async (req: AuthenticatedRequest, res, next) => {
     try {
       const tournamentId = z.string().min(1).max(100).parse(req.query.tournamentId);
-      const leagues = await db.prepare(`
-        SELECT l.id, l.name, l.code, l.tournament_id AS tournamentId, l.owner_user_id AS ownerUserId,
-          owner_profile.manager_name AS ownerManagerName, l.created_at AS createdAt, COUNT(*) AS memberCount
-        FROM leagues l JOIN league_memberships lm ON lm.league_id = l.id
-        JOIN fantasy_teams ft ON ft.id = lm.fantasy_team_id
-        JOIN profiles owner_profile ON owner_profile.user_id = l.owner_user_id
-        WHERE ft.user_id = ? AND l.tournament_id = ?
-        GROUP BY l.id, owner_profile.manager_name ORDER BY l.created_at DESC
-      `).all(requireUser(req).userId, tournamentId);
+      const leagues = postgresRls
+        ? await db.prepare('SELECT * FROM app_leagues_for_user(?)').all(tournamentId)
+        : await db.prepare(`SELECT l.id, l.name, l.code, l.tournament_id AS tournamentId,
+          l.owner_user_id AS ownerUserId, owner_profile.manager_name AS ownerManagerName,
+          l.created_at AS createdAt, COUNT(*) AS memberCount
+          FROM leagues l JOIN league_memberships lm ON lm.league_id = l.id
+          JOIN fantasy_teams ft ON ft.id = lm.fantasy_team_id
+          JOIN profiles owner_profile ON owner_profile.user_id = l.owner_user_id
+          WHERE ft.user_id = ? AND l.tournament_id = ?
+          GROUP BY l.id, owner_profile.manager_name ORDER BY l.created_at DESC`)
+          .all(requireUser(req).userId, tournamentId);
       res.json({ success: true, leagues });
     } catch (error) { next(error); }
   });
@@ -900,7 +911,7 @@ export function createApp(options: CreateAppOptions = {}) {
       const userId = requireUser(req).userId;
       const team = await getOwnedTeam(db, userId, input.tournamentId);
       if (!team) throw new ApiError(409, 'TEAM_REQUIRED', 'Debes crear tu equipo antes de crear una liga.');
-      const league = { id: randomUUID(), code: await uniqueLeagueCode(db), createdAt: now() };
+      const league = { id: randomUUID(), code: await uniqueLeagueCode(db, postgresRls), createdAt: now() };
       await db.transaction(async () => {
         await db.prepare(`INSERT INTO leagues (id, tournament_id, owner_user_id, name, code, created_at)
           VALUES (?, ?, ?, ?, ?, ?)`)
@@ -916,13 +927,20 @@ export function createApp(options: CreateAppOptions = {}) {
     try {
       const { code } = joinLeagueSchema.parse(req.body);
       const userId = requireUser(req).userId;
-      const league = await db.prepare('SELECT * FROM leagues WHERE code = ? COLLATE NOCASE').get(normalizeCode(code)) as
+      const league = await db.prepare(postgresRls
+        ? 'SELECT * FROM app_league_by_code(?)'
+        : 'SELECT * FROM leagues WHERE code = ? COLLATE NOCASE').get(normalizeCode(code)) as
         Record<string, unknown> | undefined;
       if (!league) throw new ApiError(404, 'LEAGUE_NOT_FOUND', 'No existe una liga con ese código.');
       const team = await getOwnedTeam(db, userId, String(league.tournament_id));
       if (!team) throw new ApiError(409, 'TEAM_REQUIRED', 'Debes crear tu equipo de este torneo antes de unirte.');
-      await db.prepare('INSERT INTO league_memberships (league_id, fantasy_team_id, joined_at) VALUES (?, ?, ?)')
-        .run(league.id, team.id, now());
+      if (postgresRls) {
+        const joined = await db.prepare('SELECT app_join_league(?, ?) AS joined').get(normalizeCode(code), team.id);
+        if (!joined?.joined) throw new ApiError(403, 'FORBIDDEN', 'No puedes unirte a esta liga.');
+      } else {
+        await db.prepare('INSERT INTO league_memberships (league_id, fantasy_team_id, joined_at) VALUES (?, ?, ?)')
+          .run(league.id, team.id, now());
+      }
       res.status(201).json({ success: true, league: { id: league.id, name: league.name, code: league.code, tournamentId: league.tournament_id } });
     } catch (error) { next(error); }
   });
@@ -936,14 +954,19 @@ export function createApp(options: CreateAppOptions = {}) {
       const team = await getOwnedTeam(db, userId, String(league.tournament_id));
       const member = team && await db.prepare('SELECT 1 FROM league_memberships WHERE league_id = ? AND fantasy_team_id = ?').get(leagueId, team.id);
       if (!member) throw new ApiError(404, 'MEMBERSHIP_NOT_FOUND', 'No perteneces a esta liga.');
-      await db.transaction(async () => {
-        await db.prepare('DELETE FROM league_memberships WHERE league_id = ? AND fantasy_team_id = ?').run(leagueId, team!.id);
-        const successor = await db.prepare(`SELECT ft.user_id FROM league_memberships lm
-          JOIN fantasy_teams ft ON ft.id = lm.fantasy_team_id WHERE lm.league_id = ? ORDER BY lm.joined_at LIMIT 1`)
-          .get(leagueId) as { user_id: string } | undefined;
-        if (!successor) await db.prepare('DELETE FROM leagues WHERE id = ?').run(leagueId);
-        else if (league.owner_user_id === userId) await db.prepare('UPDATE leagues SET owner_user_id = ? WHERE id = ?').run(successor.user_id, leagueId);
-      })();
+      if (postgresRls) {
+        const left = await db.prepare('SELECT app_leave_league(?, ?) AS left').get(leagueId, team!.id);
+        if (!left?.left) throw new ApiError(403, 'FORBIDDEN', 'No puedes salir de esta liga.');
+      } else {
+        await db.transaction(async () => {
+          await db.prepare('DELETE FROM league_memberships WHERE league_id = ? AND fantasy_team_id = ?').run(leagueId, team!.id);
+          const successor = await db.prepare(`SELECT ft.user_id FROM league_memberships lm
+            JOIN fantasy_teams ft ON ft.id = lm.fantasy_team_id WHERE lm.league_id = ? ORDER BY lm.joined_at LIMIT 1`)
+            .get(leagueId) as { user_id: string } | undefined;
+          if (!successor) await db.prepare('DELETE FROM leagues WHERE id = ?').run(leagueId);
+          else if (league.owner_user_id === userId) await db.prepare('UPDATE leagues SET owner_user_id = ? WHERE id = ?').run(successor.user_id, leagueId);
+        })();
+      }
       res.status(204).send();
     } catch (error) { next(error); }
   });
@@ -958,30 +981,35 @@ export function createApp(options: CreateAppOptions = {}) {
         WHERE lm.league_id = ? AND ft.user_id = ?`).get(leagueId, userId);
       if (!allowed) throw new ApiError(403, 'FORBIDDEN', 'No perteneces a esta liga.');
       const currentGameweek = await getGameweek(db, String(league.tournament_id));
-      const leaderboardRows = await db.prepare(`
-        SELECT ft.id AS fantasyTeamId, ft.name AS teamName, p.manager_name AS managerName,
-          ft.total_points AS totalPoints, ft.gameweek_points AS gameweekPoints,
-          ft.bank_cents AS bankCents, lm.joined_at AS joinedAt,
-          CASE WHEN ft.user_id = ? THEN TRUE ELSE FALSE END AS isCurrentUser
-        FROM league_memberships lm JOIN fantasy_teams ft ON ft.id = lm.fantasy_team_id
-        JOIN profiles p ON p.user_id = ft.user_id WHERE lm.league_id = ?
-        ORDER BY ft.total_points DESC, ft.gameweek_points DESC, lm.joined_at ASC
-      `).all(userId, leagueId) as Array<Record<string, unknown>>;
-      const leaderboard = await Promise.all(leaderboardRows.map(async (entry, index) => {
-        const team = await db.prepare('SELECT * FROM fantasy_teams WHERE id = ?').get(entry.fantasyTeamId) as Record<string, unknown>;
-        const snapshot = await serializeTeam(db, team, currentGameweek ? String(currentGameweek.id) : undefined) as {
-          formation: string;
-          lineup: null | { formation: string; captainId: string; viceCaptainId: string; players: Array<{ playerId: string; role: string }> };
-        };
-        return {
-          rank: index + 1, ...entry,
-          formation: snapshot.lineup?.formation ?? snapshot.formation,
-          starters: snapshot.lineup?.players.filter(player => player.role === 'STARTER').map(player => player.playerId) ?? [],
-          bench: snapshot.lineup?.players.filter(player => player.role === 'BENCH').map(player => player.playerId) ?? [],
-          captainId: snapshot.lineup?.captainId ?? '',
-          viceCaptainId: snapshot.lineup?.viceCaptainId ?? '',
-        };
-      }));
+      const leaderboard = postgresRls
+        ? (await db.prepare('SELECT * FROM app_league_leaderboard(?, ?)')
+          .all(leagueId, currentGameweek ? String(currentGameweek.id) : null))
+          .map((entry, index) => ({ ...entry, rank: index + 1,
+            starters: jsonArray(entry.starters), bench: jsonArray(entry.bench) }))
+        : await (async () => {
+          const rows = await db.prepare(`SELECT ft.id AS fantasyTeamId, ft.name AS teamName,
+            p.manager_name AS managerName, ft.total_points AS totalPoints,
+            ft.gameweek_points AS gameweekPoints, ft.bank_cents AS bankCents,
+            lm.joined_at AS joinedAt,
+            CASE WHEN ft.user_id = ? THEN TRUE ELSE FALSE END AS isCurrentUser
+            FROM league_memberships lm JOIN fantasy_teams ft ON ft.id = lm.fantasy_team_id
+            JOIN profiles p ON p.user_id = ft.user_id WHERE lm.league_id = ?
+            ORDER BY ft.total_points DESC, ft.gameweek_points DESC, lm.joined_at ASC`)
+            .all(userId, leagueId);
+          return Promise.all(rows.map(async (entry, index) => {
+            const team = await db.prepare('SELECT * FROM fantasy_teams WHERE id = ?').get(entry.fantasyTeamId) as Record<string, unknown>;
+            const snapshot = await serializeTeam(db, team, currentGameweek ? String(currentGameweek.id) : undefined) as {
+              formation: string;
+              lineup: null | { formation: string; captainId: string; viceCaptainId: string;
+                players: Array<{ playerId: string; role: string }> };
+            };
+            return { rank: index + 1, ...entry,
+              formation: snapshot.lineup?.formation ?? snapshot.formation,
+              starters: snapshot.lineup?.players.filter(player => player.role === 'STARTER').map(player => player.playerId) ?? [],
+              bench: snapshot.lineup?.players.filter(player => player.role === 'BENCH').map(player => player.playerId) ?? [],
+              captainId: snapshot.lineup?.captainId ?? '', viceCaptainId: snapshot.lineup?.viceCaptainId ?? '' };
+          }));
+        })();
       res.json({ success: true, leaderboard });
     } catch (error) { next(error); }
   });

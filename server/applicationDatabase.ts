@@ -16,6 +16,7 @@ export interface ApplicationStatement {
 export interface ApplicationDatabase {
   prepare(sql: string): ApplicationStatement;
   transaction<T>(work: () => T | Promise<T>): () => Promise<T>;
+  withUser<T>(userId: string, work: () => T): T;
 }
 
 function postgresSql(sql: string): string {
@@ -49,29 +50,49 @@ function postgresSql(sql: string): string {
 
 class PostgresApplicationDatabase implements ApplicationDatabase {
   private readonly context = new AsyncLocalStorage<PostgresExecutor>();
+  private readonly userContext = new AsyncLocalStorage<string>();
 
-  constructor(private readonly database: PostgresDatabase) {}
+  constructor(private readonly database: PostgresDatabase, private readonly enforceRls: boolean) {}
 
-  private executor(): PostgresExecutor {
-    return this.context.getStore() ?? this.database;
+  withUser<T>(userId: string, work: () => T): T {
+    return this.userContext.run(userId, work);
+  }
+
+  private async scoped<T>(work: (executor: PostgresExecutor) => Promise<T>): Promise<T> {
+    const active = this.context.getStore();
+    if (active) return work(active);
+    if (!this.enforceRls) return work(this.database);
+    return this.database.transaction(async tx => {
+      await tx.execute('SET LOCAL ROLE fantasy_lpf_app');
+      await tx.execute("SELECT set_config('app.user_id', $1, true)", [this.userContext.getStore() ?? '']);
+      return work(tx);
+    });
   }
 
   prepare(sql: string): ApplicationStatement {
     const text = postgresSql(sql);
     return {
-      get: async (...params) => this.executor().maybeOne(text, params as SqlParameter[]),
-      all: async (...params) => this.executor().query(text, params as SqlParameter[]),
-      run: async (...params) => ({ changes: await this.executor().execute(text, params as SqlParameter[]) }),
+      get: async (...params) => this.scoped(executor => executor.maybeOne(text, params as SqlParameter[])),
+      all: async (...params) => this.scoped(executor => executor.query(text, params as SqlParameter[])),
+      run: async (...params) => ({ changes: await this.scoped(executor => executor.execute(text, params as SqlParameter[])) }),
     };
   }
 
   transaction<T>(work: () => T | Promise<T>): () => Promise<T> {
-    return () => this.database.transaction(tx => this.context.run(tx, async () => work()));
+    return () => this.database.transaction(async tx => {
+      if (this.enforceRls) {
+        await tx.execute('SET LOCAL ROLE fantasy_lpf_app');
+        await tx.execute("SELECT set_config('app.user_id', $1, true)", [this.userContext.getStore() ?? '']);
+      }
+      return this.context.run(tx, async () => work());
+    });
   }
 }
 
 class SqliteApplicationDatabase implements ApplicationDatabase {
   constructor(private readonly database: SqliteDatabase) {}
+
+  withUser<T>(_userId: string, work: () => T): T { return work(); }
 
   prepare(sql: string): ApplicationStatement {
     const statement = this.database.prepare(sql);
@@ -103,7 +124,7 @@ class SqliteApplicationDatabase implements ApplicationDatabase {
   }
 }
 
-export function applicationDatabase(database: SqliteDatabase | PostgresDatabase): ApplicationDatabase {
+export function applicationDatabase(database: SqliteDatabase | PostgresDatabase, options: { enforceRls?: boolean } = {}): ApplicationDatabase {
   if ('prepare' in database) return new SqliteApplicationDatabase(database);
-  return new PostgresApplicationDatabase(database);
+  return new PostgresApplicationDatabase(database, options.enforceRls ?? false);
 }
