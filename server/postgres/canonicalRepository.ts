@@ -185,6 +185,24 @@ async function upsertObservation(db: PostgresExecutor, value: SourceObservation)
   return rows.length ? 'created' : 'unchanged';
 }
 
+async function upsertObservations(db: PostgresExecutor, values: SourceObservation[]): Promise<number> {
+  if (!values.length) return 0;
+  const rows = await db.query<{ id: string }>(`insert into source_observations
+    (id,source,entity_type,external_entity_id,source_url,parser_version,observed_at,content_hash,value_json)
+    select x.id,x.source,x.entity_type,x.external_entity_id,x.source_url,x.parser_version,
+      x.observed_at,x.content_hash,x.value_json
+    from jsonb_to_recordset($1::text::jsonb) as x(id text,source text,entity_type text,
+      external_entity_id text,source_url text,parser_version text,observed_at timestamptz,
+      content_hash text,value_json jsonb)
+    on conflict do nothing returning id`, [JSON.stringify(values.map(value => ({
+    id: randomUUID(), source: value.source, entity_type: value.entityType,
+    external_entity_id: value.externalEntityId, source_url: value.sourceUrl,
+    parser_version: value.parserVersion, observed_at: value.observedAt,
+    content_hash: value.contentHash, value_json: value.value,
+  })))]);
+  return rows.length;
+}
+
 function transactionWriters(db: PostgresExecutor): CanonicalDataTransaction {
   return {
     upsertClub: value => upsertClub(db, value),
@@ -192,6 +210,7 @@ function transactionWriters(db: PostgresExecutor): CanonicalDataTransaction {
     upsertMatch: value => upsertMatch(db, value),
     upsertPlayerStat: value => upsertPlayerStat(db, value),
     upsertObservation: value => upsertObservation(db, value),
+    upsertObservations: values => upsertObservations(db, values),
   };
 }
 

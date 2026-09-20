@@ -96,7 +96,9 @@ export class LpfAdapter implements SourceAdapter {
         if (nameIndex < 0) return;
         const clubIndex = findColumn(headers, [/^club$/, /^equipo$/]);
         const positionIndex = findColumn(headers, [/posicion/, /^pos$/]);
-        const birthIndex = findColumn(headers, [/nacimiento/, /date of birth/, /^fecha$/]);
+        // A generic "Fecha" column on LPF pages is often the publication date,
+        // not the player's birth date. Never use it as an identity attribute.
+        const birthIndex = findColumn(headers, [/nacimiento/, /date of birth/]);
         const numberIndex = findColumn(headers, [/dorsal/, /^numero$/, /^#$/]);
 
         $(table).find('tbody tr').each((_rowIndex, row) => {
@@ -115,7 +117,8 @@ export class LpfAdapter implements SourceAdapter {
             kind: 'player', fullName, displayName: fullName, normalizedName: normalizeIdentity(fullName),
             clubName, normalizedClubName: clubName ? normalizeIdentity(clubName) : null,
             position: positionIndex >= 0 ? normalizePosition(cells.eq(positionIndex).text()) : null,
-            dateOfBirth: birthIndex >= 0 ? cleanText(cells.eq(birthIndex).text()) || null : null,
+            dateOfBirth: birthIndex >= 0 && Number.isFinite(Date.parse(cleanText(cells.eq(birthIndex).text())))
+              ? new Date(cleanText(cells.eq(birthIndex).text())).toISOString().slice(0, 10) : null,
             nationality: null, shirtNumber: numberIndex >= 0 ? parseNullableInt(cells.eq(numberIndex).text()) : null,
             imageUrl: nameCell.find('img').attr('src') ? absolutize(nameCell.find('img').attr('src'), document.url) : null,
             external: { source: this.source, externalId, sourceUrl },

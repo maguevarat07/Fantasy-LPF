@@ -3,7 +3,7 @@ import type { AdapterResult, NormalizedEntity, ReconciliationResult, DataVerific
 
 export interface PipelineConflict {
   severity: 'BLOCKING' | 'NON_BLOCKING';
-  kind: 'PLAYER_IDENTITY' | 'MATCH_RESULT' | 'SOURCE_UNAVAILABLE' | 'OPTIONAL_METADATA';
+  kind: 'PLAYER_IDENTITY' | 'MATCH_RESULT' | 'MATCH_DATE' | 'SOURCE_UNAVAILABLE' | 'OPTIONAL_METADATA';
   key: string;
   reason: string;
   sources: Source[];
@@ -22,6 +22,22 @@ export function classifyAndFilter(
   const blockedPlayers = new Set<string>();
   const blockedMatches = new Set<string>();
   const blockingMatchKeys: string[] = [];
+  const invalidBirthSources = new Set<Source>();
+  for (const entity of reconciliation.accepted) {
+    if (entity.kind === 'player' && entity.dateOfBirth && !Number.isFinite(Date.parse(entity.dateOfBirth))) {
+      invalidBirthSources.add(entity.external.source);
+    }
+    if (entity.kind === 'match' && (!Number.isFinite(Date.parse(entity.deadlineAt))
+      || (entity.startsAt && !Number.isFinite(Date.parse(entity.startsAt))))) {
+      blockedEntities.add(identity(entity));
+      blockedMatches.add(`${entity.external.source}|${entity.external.externalId}`);
+      conflicts.push({ severity: 'BLOCKING', kind: 'MATCH_DATE', key: identity(entity),
+        reason: 'La fecha del partido o su deadline no es verificable.', sources: [entity.external.source] });
+    }
+  }
+  for (const source of invalidBirthSources) conflicts.push({ severity: 'NON_BLOCKING',
+    kind: 'OPTIONAL_METADATA', key: `invalid-birth-date:${source}`,
+    reason: 'Fechas de nacimiento inválidas descartadas; no afectan el scoring.', sources: [source] });
   for (const conflict of reconciliation.conflicts) {
     const sources = [...new Set(conflict.candidates.map(candidate => candidate.external.source))];
     const key = conflict.candidates.map(identity).sort().join('|');
@@ -55,7 +71,8 @@ export function classifyAndFilter(
     if (entity.kind === 'player_stat' && (blockedPlayers.has(`${entity.external.source}|${entity.playerExternalId}`)
       || blockedMatches.has(`${entity.external.source}|${entity.matchExternalId}`))) return false;
     return true;
-  });
+  }).map(entity => entity.kind === 'player' && entity.dateOfBirth
+    && !Number.isFinite(Date.parse(entity.dateOfBirth)) ? { ...entity, dateOfBirth: null } : entity);
   const acceptedBySource: Partial<Record<Source, number>> = {};
   for (const entity of accepted) acceptedBySource[entity.external.source] = (acceptedBySource[entity.external.source] ?? 0) + 1;
   return { accepted, conflicts, quarantined: reconciliation.accepted.length - accepted.length,

@@ -14,6 +14,7 @@ export interface CanonicalDataTransaction {
   upsertLineupEntry?(value: NormalizedLineupEntry): Promise<'created' | 'updated' | 'unchanged'>;
   upsertMatchEvent?(value: NormalizedMatchEvent): Promise<'created' | 'updated' | 'unchanged'>;
   upsertObservation(value: SourceObservation): Promise<'created' | 'unchanged'>;
+  upsertObservations?(values: SourceObservation[]): Promise<number>;
 }
 
 export interface CanonicalDataRepository {
@@ -39,7 +40,10 @@ export async function persistEntities(
       if (result === 'created') created += 1;
       if (result === 'updated') updated += 1;
     }
-    for (const observation of observations) await tx.upsertObservation(observation);
+    if (tx.upsertObservations) created += await tx.upsertObservations(observations);
+    else for (const observation of observations) {
+      if (await tx.upsertObservation(observation) === 'created') created += 1;
+    }
     return { created, updated };
   });
 }

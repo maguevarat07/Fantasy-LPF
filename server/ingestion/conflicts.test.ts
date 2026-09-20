@@ -73,4 +73,14 @@ describe('publicación parcial segura', () => {
     expect(output.accepted).toEqual([other]);
     expect(output.quarantined).toBe(3);
   });
+
+  it('descarta fecha de nacimiento inválida sin retener al jugador', () => {
+    const value = player('LPF', 'p1', 'Tauro');
+    value.dateOfBirth = 'agosto 12, 2024';
+    const output = classify([result('LPF', [value])]);
+    expect(output.accepted).toEqual([{ ...value, dateOfBirth: null }]);
+    expect(output.conflicts).toContainEqual(expect.objectContaining({
+      severity: 'NON_BLOCKING', kind: 'OPTIONAL_METADATA', key: 'invalid-birth-date:LPF',
+    }));
+  });
 });

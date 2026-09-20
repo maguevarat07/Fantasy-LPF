@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createPostgresDatabase, type PostgresDatabase } from '../postgres/client.js';
+import { createPostgresCanonicalDataRepository } from '../postgres/canonicalRepository.js';
+import { persistEntities } from './repository.js';
 import { runScheduledDataSync } from './scheduledSync.js';
 import { matchVerificationKey } from './verification.js';
 import type { SyncReport } from './types.js';
@@ -79,7 +81,8 @@ describe.skipIf(!testUrl)('pipeline durable con PostgreSQL real y RLS activo', (
       await db.execute(await readFile(`supabase/migrations/${file}`, 'utf8'));
     }
     await db.execute('create table app_schema_migrations(version text primary key, checksum text not null, applied_at timestamptz not null default now())');
-    for (const file of ['202609190001_rls_isolation.sql','202609190002_durable_pipeline.sql']) {
+    for (const file of ['202609190001_rls_isolation.sql','202609190002_durable_pipeline.sql',
+      '202609190003_ingest_payload.sql']) {
       await db.execute((await readFile(`supabase/migrations/${file}`, 'utf8')).replaceAll('public.', `"${schema}".`));
     }
     await db.execute(`grant usage on schema "${schema}" to fantasy_lpf_app`);
@@ -99,7 +102,7 @@ describe.skipIf(!testUrl)('pipeline durable con PostgreSQL real y RLS activo', (
   it('avanza INGEST → SCORE → PRICE con datos reales, y deja precio idempotente', async () => {
     const durations: number[] = [];
     const deps = { db, ingest: async () => report() };
-    for (const stage of ['RECONCILED','SCORED','PRICED']) {
+    for (const stage of ['INGESTED','RECONCILED','SCORED','PRICED']) {
       const start = Date.now();
       const result = await runScheduledDataSync(deps);
       durations.push(Date.now() - start);
@@ -117,6 +120,7 @@ describe.skipIf(!testUrl)('pipeline durable con PostgreSQL real y RLS activo', (
 
   it('conflicto informativo conserva scoring y pricing', async () => {
     const deps = { db, ingest: async () => report([], 1) };
+    expect((await runScheduledDataSync(deps)).stage).toBe('INGESTED');
     expect((await runScheduledDataSync(deps)).stage).toBe('RECONCILED');
     expect((await runScheduledDataSync(deps)).stage).toBe('SCORED');
     const priced = await runScheduledDataSync(deps);
@@ -126,9 +130,22 @@ describe.skipIf(!testUrl)('pipeline durable con PostgreSQL real y RLS activo', (
     expect((await db.one<{ count: number }>("select count(*)::int as count from pipeline_conflicts where severity='NON_BLOCKING'")).count).toBe(1);
   }, 120_000);
 
+  it('conflicto de identidad aislado no bloquea el precio de datos deportivos confirmados', async () => {
+    const input = report();
+    input.publication.blocking = 1;
+    input.publication.conflicts = [{ severity: 'BLOCKING', kind: 'PLAYER_IDENTITY',
+      key: 'LPF|ambiguous-player', reason: 'qa', sources: ['LPF'] }];
+    const deps = { db, ingest: async () => input };
+    for (const expected of ['INGESTED','RECONCILED','SCORED','PRICED']) {
+      expect((await runScheduledDataSync(deps)).stage).toBe(expected);
+    }
+    expect((await db.one<{ count: number }>("select count(*)::int as count from pricing_runs where status='COMPLETED'")).count).toBe(1);
+  }, 120_000);
+
   it('conflicto de partido retira puntos antiguos, puntúa el partido sano y retiene pricing', async () => {
     const key = matchVerificationKey({ homeClub: 'Plaza Amador', awayClub: 'Tauro FC', startsAt: matchAt });
     const deps = { db, ingest: async () => report([key]) };
+    expect((await runScheduledDataSync(deps)).stage).toBe('INGESTED');
     expect((await runScheduledDataSync(deps)).stage).toBe('RECONCILED');
     expect((await db.one<{ score_status: string }>("select score_status from matches where id='match-a'")).score_status).toBe('PENDING');
     expect((await runScheduledDataSync(deps)).stage).toBe('SCORED');
@@ -147,7 +164,7 @@ describe.skipIf(!testUrl)('pipeline durable con PostgreSQL real y RLS activo', (
     const second = await runScheduledDataSync({ db, ingest: async () => report() });
     expect(second.runId).toBe('already-running');
     release();
-    expect((await first).stage).toBe('RECONCILED');
+    expect((await first).stage).toBe('INGESTED');
   }, 120_000);
 
   it('reintenta una etapa fallida sin crear otro run ni duplicar scoring', async () => {
@@ -161,8 +178,38 @@ describe.skipIf(!testUrl)('pipeline durable con PostgreSQL real y RLS activo', (
     await db.execute('update pipeline_runs set next_retry_at=now()-interval \'1 second\' where id=$1', [failed.id]);
     const recovered = await runScheduledDataSync({ db, ingest: async () => report() });
     expect(recovered.runId).toBe(failed.id);
-    expect(recovered.stage).toBe('RECONCILED');
+    expect(recovered.stage).toBe('INGESTED');
     expect((await db.one<{ count: number }>('select count(*)::int as count from pipeline_runs')).count).toBe(1);
+  }, 120_000);
+
+  it('publica entidades en lotes reanudables con cursor durable', async () => {
+    const input = report();
+    const clubs = ['Atlético QA', 'Unión QA'].map((name, index) => ({
+      kind: 'club' as const, name, normalizedName: name.toLowerCase(),
+      external: { source: 'TRANSFERMARKT' as const, externalId: `qa-club-${index}`,
+        sourceUrl: 'https://qa.invalid/club' },
+    }));
+    input.adapters[0].entities = clubs;
+    input.reconciliation.accepted = clubs;
+    input.publication.accepted = 2;
+    input.publication.acceptedBySource = { TRANSFERMARKT: 2 };
+    const deps = { db, ingest: async () => input, publishEntityBatchSize: 1 };
+    expect((await runScheduledDataSync(deps)).stage).toBe('INGESTED');
+    expect((await runScheduledDataSync(deps)).stage).toBe('PUBLISHING');
+    expect((await db.one<{ entity_cursor: number }>('select entity_cursor from pipeline_ingest_payloads')).entity_cursor).toBe(1);
+    expect((await runScheduledDataSync(deps)).stage).toBe('RECONCILED');
+    expect((await db.one<{ count: number }>("select count(*)::int as count from club_external_ids where external_id like 'qa-club-%'")).count).toBe(2);
+  }, 120_000);
+
+  it('guarda observaciones en lote sin duplicarlas al reintentar', async () => {
+    const value = { source: 'LPF' as const, entityType: 'verification' as const,
+      externalEntityId: 'qa-observation', sourceUrl: 'https://qa.invalid/observation',
+      parserVersion: 'qa', observedAt: new Date().toISOString(), contentHash: 'qa-hash',
+      value: { confirmed: true } };
+    const repository = createPostgresCanonicalDataRepository(db);
+    await persistEntities(repository, [], [value, { ...value, externalEntityId: 'qa-observation-2' }]);
+    await persistEntities(repository, [], [value]);
+    expect((await db.one<{ count: number }>("select count(*)::int as count from source_observations where parser_version='qa'")).count).toBe(2);
   }, 120_000);
 
   it('expone al rol de aplicación la alerta de jornada vencida sin abrir las tablas internas', async () => {
