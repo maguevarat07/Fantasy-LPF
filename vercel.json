@@ -18,27 +18,7 @@
     },
     "api/cron/recover.ts": {
       "maxDuration": 300
-    },
-    "api/cron/slot08.ts": { "maxDuration": 300 },
-    "api/cron/slot10.ts": { "maxDuration": 300 },
-    "api/cron/slot12.ts": { "maxDuration": 300 },
-    "api/cron/slot14.ts": { "maxDuration": 300 },
-    "api/cron/slot16.ts": { "maxDuration": 300 },
-    "api/cron/slot18.ts": { "maxDuration": 300 },
-    "api/cron/slot20.ts": { "maxDuration": 300 },
-    "api/cron/slot22.ts": { "maxDuration": 300 },
-    "api/cron/slot01.ts": { "maxDuration": 300 },
-    "api/cron/slot03.ts": { "maxDuration": 300 },
-    "api/cron/slot05.ts": { "maxDuration": 300 },
-    "api/cron/slot07.ts": { "maxDuration": 300 },
-    "api/cron/slot09.ts": { "maxDuration": 300 },
-    "api/cron/slot11.ts": { "maxDuration": 300 },
-    "api/cron/slot13.ts": { "maxDuration": 300 },
-    "api/cron/slot15.ts": { "maxDuration": 300 },
-    "api/cron/slot17.ts": { "maxDuration": 300 },
-    "api/cron/slot19.ts": { "maxDuration": 300 },
-    "api/cron/slot21.ts": { "maxDuration": 300 },
-    "api/cron/slot23.ts": { "maxDuration": 300 }
+    }
   },
   "crons": [
     {
@@ -79,6 +59,10 @@
     { "path": "/api/cron/slot23", "schedule": "0 23 * * *" }
   ],
   "rewrites": [
+    {
+      "source": "/api/cron/slot(.*)",
+      "destination": "/api/cron/sync"
+    },
     {
       "source": "/api/(.*)",
       "destination": "/api/index"
