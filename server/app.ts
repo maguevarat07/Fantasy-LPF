@@ -509,6 +509,7 @@ export function createApp(options: CreateAppOptions = {}) {
           players: [],
           currentGameweek: null,
           completeness: { status: 'EMPTY', clubCount: 0, playerCount: 0, message: 'Todavía no hay datos canónicos ingeridos.' },
+          pipeline: null,
         });
       }
       const record = tournament as Record<string, unknown>;
@@ -597,6 +598,9 @@ export function createApp(options: CreateAppOptions = {}) {
       sourceRuns.forEach(run => { sourcesStatus[run.source] = run.status; });
       const lastSyncTimestamp = sourceRuns.map(run => run.finishedAt).sort().at(-1) ?? '';
       const currentGameweek = await getGameweek(db, String(record.id));
+      const pipeline = postgresRls
+        ? (await db.prepare('SELECT app_pipeline_status() AS status').get())?.status ?? null
+        : null;
       res.json({
         success: true,
         tournament: {
@@ -610,6 +614,7 @@ export function createApp(options: CreateAppOptions = {}) {
         clubs,
         players: playersWithHistory,
         currentGameweek: serializeGameweek(currentGameweek),
+        pipeline,
         completeness: {
           status: complete ? 'CATALOG_COMPLETE' : 'CATALOG_INCOMPLETE',
           clubCount,

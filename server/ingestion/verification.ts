@@ -45,7 +45,7 @@ function asClaim(result: AdapterResult, value: unknown, externalId: string, sour
   };
 }
 
-function matchKey(claim: MatchVerificationClaim): string {
+export function matchVerificationKey(claim: Pick<MatchVerificationClaim, 'startsAt' | 'homeClub' | 'awayClub'>): string {
   // The kickoff date avoids mixing Apertura/Clausura rounds with the same number.
   const date = Number.isNaN(Date.parse(claim.startsAt)) ? claim.startsAt : new Date(claim.startsAt).toISOString().slice(0, 10);
   return `${date}|${clubKey(claim.homeClub)}|${clubKey(claim.awayClub)}`;
@@ -65,7 +65,7 @@ export function buildDataVerificationReport(results: AdapterResult[]): DataVerif
   }
   const grouped = new Map<string, MatchVerificationClaim[]>();
   for (const claim of claims) {
-    const key = matchKey(claim);
+    const key = matchVerificationKey(claim);
     const group = grouped.get(key) ?? [];
     group.push(claim);
     grouped.set(key, group);

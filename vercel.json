@@ -8,13 +8,34 @@
       "maxDuration": 30
     },
     "api/cron/sync.ts": {
-      "maxDuration": 60
+      "maxDuration": 300
+    },
+    "api/cron/advance.ts": {
+      "maxDuration": 300
+    },
+    "api/cron/finalize.ts": {
+      "maxDuration": 300
+    },
+    "api/cron/recover.ts": {
+      "maxDuration": 300
     }
   },
   "crons": [
     {
       "path": "/api/cron/sync",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/advance",
+      "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/finalize",
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/recover",
+      "schedule": "0 14 * * *"
     }
   ],
   "rewrites": [

@@ -9,6 +9,7 @@ export * from './reconciliation.js';
 export * from './repository.js';
 export * from './types.js';
 export * from './verification.js';
+export * from './conflicts.js';
 export * from './adapters/lpf.js';
 export * from './adapters/transfermarkt.js';
 export * from './adapters/soccerway.js';

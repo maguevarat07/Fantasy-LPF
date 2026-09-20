@@ -19,6 +19,11 @@ export async function recalculateGameweekPostgres(
     where m.gameweek_id=$1 and m.score_status in ('CONFIRMED','CORRECTED')`, [gameweekId]);
   const at = timestamp();
   const teamCount = await db.transaction(async tx => {
+    // If a previously confirmed match is quarantined after sources disagree,
+    // withdraw its old score before recomputing teams from verified matches.
+    await tx.execute(`delete from player_fantasy_points pfp where pfp.gameweek_id=$1
+      and not exists (select 1 from matches m where m.id=pfp.match_id
+        and m.score_status in ('CONFIRMED','CORRECTED'))`, [gameweekId]);
     for (const row of rows) {
       const clubId = String(row.club_id ?? row.player_club_id ?? '');
       const opponentScore = clubId === row.home_club_id ? row.away_score : clubId === row.away_club_id ? row.home_score : null;

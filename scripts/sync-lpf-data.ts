@@ -37,9 +37,8 @@ async function main() {
   const repository = dryRun ? undefined : await loadRepository();
   const report = await createDefaultIngestionOrchestrator(repository).sync();
   if (databaseHandle) {
-    if (report.verification.conflicts > 0) {
-      throw new Error(`Se detectaron ${report.verification.conflicts} marcadores contradictorios entre fuentes. Se guardó la evidencia, pero se bloqueó el cálculo de puntos y precios para revisión.`);
-    }
+    // The orchestrator quarantines disputed entities while retaining all source
+    // observations. Confirmed matches and players may continue through scoring.
     // A brand-new player enters at their position's baseline price; recalculatePlayerPrices
     // below then adjusts every player (new or existing) from their scored performance.
     databaseHandle.exec(`
@@ -51,7 +50,9 @@ async function main() {
       FROM players WHERE club_id IS NOT NULL AND position IN ('GK','DEF','MID','FWD');
     `);
     const transfermarkt = report.adapters.find(adapter => adapter.source === 'TRANSFERMARKT');
-    const registeredPlayers = transfermarkt?.entities.filter(entity => entity.kind === 'player') ?? [];
+    const blockedPlayers = new Set(report.publication.blockedPlayerExternalKeys);
+    const registeredPlayers = transfermarkt?.entities.filter(entity => entity.kind === 'player'
+      && !blockedPlayers.has(`${entity.external.source}|${entity.external.externalId}`)) ?? [];
     const registeredClubs = new Set(registeredPlayers.map(player => player.kind === 'player' ? player.normalizedClubName : null).filter(Boolean));
     if (transfermarkt?.status === 'WORKING' && registeredClubs.size === 12 && registeredPlayers.length >= 180) {
       const syncedAt = transfermarkt.finishedAt;
@@ -69,13 +70,15 @@ async function main() {
           const canonical = findPlayer.get(player.external.externalId) as { playerId: string; clubId: string } | undefined;
           if (canonical) saveRegistration.run(canonical.playerId, canonical.clubId, syncedAt, syncedAt);
         }
-        databaseHandle!.prepare(`UPDATE tournament_roster_registrations SET active = 0, ended_at = ?
-          WHERE tournament_id = 'apertura-2026' AND source = 'TRANSFERMARKT'
-            AND active = 1 AND last_seen_at <> ?`).run(syncedAt, syncedAt);
-        databaseHandle!.exec(`UPDATE tournament_players SET active = CASE WHEN player_id IN (
-          SELECT player_id FROM tournament_roster_registrations
-          WHERE tournament_id = 'apertura-2026' AND source = 'TRANSFERMARKT' AND active = 1
-        ) THEN 1 ELSE 0 END WHERE tournament_id = 'apertura-2026';`);
+        if (![...blockedPlayers].some(key => key.startsWith('TRANSFERMARKT|'))) {
+          databaseHandle!.prepare(`UPDATE tournament_roster_registrations SET active = 0, ended_at = ?
+            WHERE tournament_id = 'apertura-2026' AND source = 'TRANSFERMARKT'
+              AND active = 1 AND last_seen_at <> ?`).run(syncedAt, syncedAt);
+          databaseHandle!.exec(`UPDATE tournament_players SET active = CASE WHEN player_id IN (
+            SELECT player_id FROM tournament_roster_registrations
+            WHERE tournament_id = 'apertura-2026' AND source = 'TRANSFERMARKT' AND active = 1
+          ) THEN 1 ELSE 0 END WHERE tournament_id = 'apertura-2026';`);
+        }
       })();
     }
     const { recalculateGameweek } = await import('../server/scoring.ts');
@@ -84,7 +87,7 @@ async function main() {
       recalculateGameweek(databaseHandle as never, gameweek.id);
     }
     const { recalculatePlayerPrices } = await import('../server/pricing.ts');
-    recalculatePlayerPrices(databaseHandle as never);
+    if (report.publication.blocking === 0) recalculatePlayerPrices(databaseHandle as never);
   }
   const output = full ? { dryRun, ...report } : {
     dryRun,
@@ -93,6 +96,7 @@ async function main() {
       source, status, sourceUrls, httpStatuses, entities: entities.length, observations: observations.length, warnings, errors,
     })),
     persistence: report.persistence,
+    publication: report.publication,
     completeness: report.completeness,
     verification: {
       matchClaimsBySource: report.verification.matchClaimsBySource,

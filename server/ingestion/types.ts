@@ -171,6 +171,16 @@ export interface SyncReport {
   persistence: PersistenceResult;
   completeness: CompletenessReport;
   verification: DataVerificationReport;
+  publication: {
+    accepted: number;
+    quarantined: number;
+    blocking: number;
+    nonBlocking: number;
+    conflicts: import('./conflicts.js').PipelineConflict[];
+    blockingMatchKeys: string[];
+    blockedPlayerExternalKeys: string[];
+    acceptedBySource: Partial<Record<Source, number>>;
+  };
 }
 
 export interface MatchVerificationClaim {
