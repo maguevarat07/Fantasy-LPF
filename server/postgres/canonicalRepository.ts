@@ -82,7 +82,13 @@ async function upsertPlayer(db: PostgresExecutor, value: NormalizedPlayer): Prom
     }
   }
   if (!clubId || !position) return 'unchanged';
-  if (linked?.id && !positionResolved && linked.position !== position) {
+  const linkedBirthDate = linked?.date_of_birth instanceof Date
+    ? linked.date_of_birth.toISOString().slice(0, 10)
+    : String(linked?.date_of_birth ?? '').slice(0, 10);
+  const conflictingBirthDate = Boolean(linkedBirthDate && value.dateOfBirth
+    && linkedBirthDate !== value.dateOfBirth.slice(0, 10));
+  if (linked?.id && !resolvedAlias && ((!positionResolved && linked.position !== position)
+    || conflictingBirthDate)) {
     await db.execute(`insert into player_identity_candidates
       (source,external_id,candidate_player_id,normalized_name,club_id,position,incoming_json,status,
        first_seen_at,last_seen_at) values($1,$2,$3,$4,$5,$6,$7::jsonb,'PENDING',$8,$8)

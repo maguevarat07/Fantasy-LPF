@@ -267,6 +267,27 @@ describe.skipIf(!testUrl)('pipeline durable con PostgreSQL real y RLS activo', (
       where player_id='player-a' and match_id='match-a'`)).goals).toBe(1);
   }, 120_000);
 
+  it('cuarentena una fecha de nacimiento incompatible en un ID externo ya vinculado', async () => {
+    await db.execute("update players set date_of_birth='2000-01-01' where id='player-a'");
+    await db.execute(`insert into player_external_ids(player_id,source,external_id,source_url,created_at,updated_at)
+      values('player-a','LPF','qa-birth-conflict','https://qa.invalid/player-a',now(),now())`);
+    const repository = createPostgresCanonicalDataRepository(db);
+    await persistEntities(repository, [{
+      kind: 'player' as const, fullName: 'Otro Jugador', displayName: 'Otro Jugador',
+      normalizedName: 'otro jugador', clubName: 'Plaza Amador', normalizedClubName: 'plaza amador',
+      position: 'FWD' as const, dateOfBirth: '2001-01-01', nationality: 'Panamá',
+      shirtNumber: 9, imageUrl: null,
+      external: { source: 'LPF' as const, externalId: 'qa-birth-conflict',
+        sourceUrl: 'https://qa.invalid/player-a' },
+    }], []);
+    const player = await db.one<{ name: string; date_of_birth: string }>(
+      "select name,date_of_birth::text as date_of_birth from players where id='player-a'");
+    expect(player.name).toBe('Jugador A');
+    expect(player.date_of_birth).toBe('2000-01-01');
+    expect((await db.one<{ count: number }>(`select count(*)::int as count from player_identity_candidates
+      where source='LPF' and external_id='qa-birth-conflict' and status='PENDING'`)).count).toBe(1);
+  }, 120_000);
+
   it('una resolución aprobada vincula otra fuente al canónico sin duplicarlo', async () => {
     await db.execute(`insert into player_identity_resolutions(source,external_id,canonical_player_id,decision,
       evidence_summary,resolved_at,resolved_by) values('LPF','qa-resolved-player','player-a','SAME_PERSON','qa',now(),'qa')`);
