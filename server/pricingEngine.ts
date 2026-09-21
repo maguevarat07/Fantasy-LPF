@@ -185,7 +185,7 @@ function median(values: readonly number[]): number {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-function inputHash(input: PricingEngineInput, bootstrap: boolean): string {
+export function pricingInputHash(input: PricingEngineInput, bootstrap: boolean): string {
   return createHash('sha256').update(JSON.stringify({
     tournamentId: input.tournamentId,
     asOfGameweekId: input.asOfGameweekId,
@@ -195,9 +195,35 @@ function inputHash(input: PricingEngineInput, bootstrap: boolean): string {
   })).digest('hex');
 }
 
+export interface PricingInputSnapshot {
+  snapshotVersion: 1;
+  algorithmVersion: string;
+  bootstrap: boolean;
+  input: PricingEngineInput;
+}
+
+/** Preserves the exact player population and numeric inputs supplied to this run. */
+export function createPricingInputSnapshot(input: PricingEngineInput, bootstrap: boolean): string {
+  return JSON.stringify({ snapshotVersion: 1, algorithmVersion: input.config.formulaVersion,
+    bootstrap, input } satisfies PricingInputSnapshot);
+}
+
+export function replayPricingInputSnapshot(snapshotJson: string, expectedHash: string): PlayerPriceQuote[] {
+  const snapshot = JSON.parse(snapshotJson) as PricingInputSnapshot;
+  if (snapshot.snapshotVersion !== 1 || snapshot.algorithmVersion !== snapshot.input?.config?.formulaVersion
+      || !snapshot.algorithmVersion.startsWith(PRICING_CONFIG.formulaVersion)
+      || typeof snapshot.bootstrap !== 'boolean' || !Array.isArray(snapshot.input.players)) {
+    throw new Error('Versión o contenido de snapshot de pricing no compatible.');
+  }
+  if (pricingInputHash(snapshot.input, snapshot.bootstrap) !== expectedHash) {
+    throw new Error('El snapshot de pricing no coincide con el hash de entrada persistido.');
+  }
+  return calculatePriceQuotes(snapshot.input, { bootstrap: snapshot.bootstrap });
+}
+
 export function calculatePriceQuotes(input: PricingEngineInput, options: { bootstrap?: boolean } = {}): PlayerPriceQuote[] {
   const bootstrap = options.bootstrap ?? false;
-  const hash = inputHash(input, bootstrap);
+  const hash = pricingInputHash(input, bootstrap);
   const prepared = input.players.map(player => ({
     ...player,
     recentForm: calculateRecentForm(player.recentGameweekPoints, input.config),
@@ -363,9 +389,10 @@ export function calculatePlayerPrices(
   const bootstrap = !db.prepare(`SELECT 1 FROM pricing_runs
     WHERE tournament_id = ? AND formula_version = ? AND status = 'COMPLETED' LIMIT 1`).get(tournamentId, config.formulaVersion);
   const quotes = calculatePriceQuotes(input, { bootstrap });
-  const hash = quotes[0]?.inputHash ?? inputHash(input, bootstrap);
+  const hash = quotes[0]?.inputHash ?? pricingInputHash(input, bootstrap);
   const run = startPricingRun(db, {
     tournamentId, asOfGameweekId, formulaVersion: config.formulaVersion, config, inputHash: hash,
+    inputSnapshotJson: createPricingInputSnapshot(input, bootstrap),
   });
   const inputs = new Map(input.players.map(player => [player.playerId, player]));
   let completion;

@@ -6,6 +6,9 @@ import {
   calculatePlayerPrices,
   calculatePriceQuotes,
   calculateRecentForm,
+  createPricingInputSnapshot,
+  pricingInputHash,
+  replayPricingInputSnapshot,
   midrankPercentiles,
   roundMoney,
   type PlayerPricingInput,
@@ -111,6 +114,27 @@ describe('Pricing Engine puro v2', () => {
     expect(bootstrap.currentPriceCents).toBe(bootstrap.fairPriceCents);
     expect(Math.abs(gradual.priceChangeCents)).toBeLessThanOrEqual(30_000_000);
   });
+
+  it('reproduce exactamente población, forma, percentiles, ticks y movimiento desde el snapshot', () => {
+    const input = {
+      tournamentId: 't', asOfGameweekId: 'gw', config: PRICING_CONFIG,
+      players: [
+        player({ playerId: 'gk', position: 'GK', seasonPoints: 7, recentGameweekPoints: [0, 2, 5], appearances: 3, eligibleMatches: 5, previousPriceCents: 500_000_000 }),
+        player({ playerId: 'def', position: 'DEF', seasonPoints: 12, recentGameweekPoints: [1, 2, 9], appearances: 6, eligibleMatches: 7, previousPriceCents: 560_000_000 }),
+        player({ playerId: 'mid', position: 'MID', seasonPoints: 20, recentGameweekPoints: [0, 10, 10], appearances: 5, eligibleMatches: 7, previousPriceCents: 700_000_000 }),
+        player({ playerId: 'fwd-a', position: 'FWD', seasonPoints: 30, recentGameweekPoints: [5, 10, 15], appearances: 6, eligibleMatches: 7, previousPriceCents: 800_000_000 }),
+        player({ playerId: 'fwd-b', position: 'FWD', seasonPoints: 0, recentGameweekPoints: [0, 0, 0], appearances: 0, eligibleMatches: 7, previousPriceCents: 600_000_000 }),
+      ],
+    };
+    const original = calculatePriceQuotes(input, { bootstrap: false });
+    const snapshot = createPricingInputSnapshot(input, false);
+    expect(replayPricingInputSnapshot(snapshot, pricingInputHash(input, false))).toEqual(original);
+    expect(original).toHaveLength(input.players.length);
+    expect(original.every(quote => quote.currentPriceCents % 10_000_000 === 0
+      && Math.abs(quote.priceChangeCents) <= 30_000_000)).toBe(true);
+    expect(original.find(quote => quote.playerId === 'fwd-a')?.recentForm).toBe(10);
+    expect(original.find(quote => quote.playerId === 'fwd-a')?.seasonPointsPercentile).toBe(1);
+  });
 });
 
 function jobDatabase(): SqliteDatabase {
@@ -159,5 +183,15 @@ describe('calculatePlayerPrices job', () => {
       WHERE pricing_run_id = ? AND player_id = 'p1'`).get(first.runId) as { seasonPoints: number; confidence: number };
     expect(p1.seasonPoints).toBe(8);
     expect(p1.confidence).toBeCloseTo(2 / 6);
+    const stored = db.prepare('SELECT input_hash AS hash, input_snapshot_json AS snapshot FROM pricing_runs WHERE id = ?')
+      .get(first.runId) as { hash: string; snapshot: string };
+    const replay = replayPricingInputSnapshot(stored.snapshot, stored.hash);
+    const history = db.prepare('SELECT player_id AS playerId, previous_price_cents AS previousPrice, current_price_cents AS currentPrice, fair_price_cents AS fairPrice FROM player_price_history WHERE pricing_run_id = ? ORDER BY player_id')
+      .all(first.runId) as Array<{ playerId: string; previousPrice: number; currentPrice: number; fairPrice: number }>;
+    expect(replay.map(quote => ({ playerId: quote.playerId, previousPrice: quote.previousPriceCents,
+      currentPrice: quote.currentPriceCents, fairPrice: quote.fairPriceCents }))).toEqual(history);
+    expect(replay.every(quote => quote.currentPriceCents % 10_000_000 === 0)).toBe(true);
+    expect(() => replayPricingInputSnapshot(stored.snapshot.replace('"position":"FWD"', '"position":"MID"'), stored.hash))
+      .toThrow(/hash/);
   });
 });

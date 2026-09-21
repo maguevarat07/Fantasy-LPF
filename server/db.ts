@@ -537,6 +537,9 @@ const MIGRATIONS: readonly string[] = [
   UPDATE tournament_players SET initial_price_cents = price_cents
     WHERE pricing_status = 'LEGACY';
   `,
+  `
+  ALTER TABLE pricing_runs ADD COLUMN input_snapshot_json TEXT;
+  `,
 ];
 
 export interface OpenDatabaseOptions {

@@ -10,6 +10,7 @@ export interface PricingRunRecord {
   formulaVersion: string;
   configJson: string;
   inputHash: string;
+  inputSnapshotJson: string | null;
   status: PricingRunStatus;
   createdAt: string;
   completedAt: string | null;
@@ -22,6 +23,7 @@ export interface StartPricingRunInput {
   formulaVersion: string;
   config: unknown;
   inputHash: string;
+  inputSnapshotJson?: string;
   createdAt?: string;
 }
 
@@ -60,6 +62,7 @@ interface PricingRunRow {
   formula_version: string;
   config_json: string;
   input_hash: string;
+  input_snapshot_json: string | null;
   status: PricingRunStatus;
   created_at: string;
   completed_at: string | null;
@@ -73,6 +76,7 @@ function mapRun(row: PricingRunRow): PricingRunRecord {
     formulaVersion: row.formula_version,
     configJson: row.config_json,
     inputHash: row.input_hash,
+    inputSnapshotJson: row.input_snapshot_json,
     status: row.status,
     createdAt: row.created_at,
     completedAt: row.completed_at,
@@ -133,10 +137,10 @@ export function startPricingRun(db: SqliteDatabase, input: StartPricingRunInput)
   const id = input.id ?? randomUUID();
   const createdAt = input.createdAt ?? new Date().toISOString();
   db.prepare(`INSERT INTO pricing_runs
-    (id, tournament_id, as_of_gameweek_id, formula_version, config_json, input_hash, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'RUNNING', ?)`)
+    (id, tournament_id, as_of_gameweek_id, formula_version, config_json, input_hash, input_snapshot_json, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'RUNNING', ?)`)
     .run(id, input.tournamentId, input.asOfGameweekId, input.formulaVersion,
-      JSON.stringify(input.config), input.inputHash, createdAt);
+      JSON.stringify(input.config), input.inputHash, input.inputSnapshotJson ?? null, createdAt);
   return getPricingRun(db, id)!;
 }
 

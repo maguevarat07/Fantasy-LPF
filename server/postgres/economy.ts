@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { calculatePlayerPoints, SCORING_VERSION } from '../scoring.js';
 import {
-  calculatePriceQuotes, pricingConfigFromEnv,
+  calculatePriceQuotes, createPricingInputSnapshot, pricingConfigFromEnv,
   type PlayerPricingInput, type PricingEngineInput, type PricingPosition, type PricingRunResult,
 } from '../pricingEngine.js';
 import type { PostgresDatabase, PostgresExecutor } from './client.js';
@@ -122,8 +122,9 @@ export async function recalculateLatestPricesPostgres(
     const runId = randomUUID();
     const at = timestamp();
     await tx.execute(`insert into pricing_runs(id,tournament_id,as_of_gameweek_id,formula_version,config_json,
-      input_hash,status,created_at) values($1,$2,$3,$4,$5::jsonb,$6,'RUNNING',$7)`,
-    [runId, tournamentId, gameweek.id, config.formulaVersion, JSON.stringify(config), inputHash, at]);
+      input_hash,input_snapshot_json,status,created_at) values($1,$2,$3,$4,$5::jsonb,$6,$7,'RUNNING',$8)`,
+    [runId, tournamentId, gameweek.id, config.formulaVersion, JSON.stringify(config), inputHash,
+      createPricingInputSnapshot(input, Boolean(bootstrap)), at]);
     const byId = new Map(input.players.map(player => [player.playerId, player]));
     for (const quote of quotes) {
       const previous = byId.get(quote.playerId)!.previousPriceCents;
