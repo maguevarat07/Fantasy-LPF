@@ -54,23 +54,85 @@ async function upsertClub(db: PostgresExecutor, value: NormalizedClub): Promise<
 }
 
 async function upsertPlayer(db: PostgresExecutor, value: NormalizedPlayer): Promise<Result> {
-  const linked = await db.maybeOne<Row>(`select p.* from player_external_ids x join players p on p.id=x.player_id
+  let linked = await db.maybeOne<Row>(`select p.* from player_external_ids x join players p on p.id=x.player_id
     where x.source=$1 and x.external_id=$2`, [value.external.source, value.external.externalId]);
-  const clubId = await clubIdByName(db, value.normalizedClubName);
-  if (!clubId || !value.position) return 'unchanged';
+  const externalLinkExisted = Boolean(linked);
+  const explicitResolution = await db.maybeOne<{ canonical_player_id: string; retired_player_id: string | null }>(
+    `select canonical_player_id,retired_player_id from player_identity_resolutions
+      where source=$1 and external_id=$2 and decision='SAME_PERSON'`,
+    [value.external.source, value.external.externalId]);
+  let resolvedAlias = Boolean(explicitResolution?.retired_player_id);
+  if (explicitResolution && String(linked?.id ?? '') !== explicitResolution.canonical_player_id) {
+    linked = await db.maybeOne<Row>('select * from players where id=$1', [explicitResolution.canonical_player_id]);
+    resolvedAlias = true;
+  }
+  let clubId = await clubIdByName(db, value.normalizedClubName);
+  let position = value.position;
+  let positionResolved = false;
+  if (linked?.id) {
+    const overrides = await db.query<{ field_name: string; canonical_value: string }>(
+      `select field_name,canonical_value from player_field_resolutions
+        where player_id=$1 and field_name in ('club_id','position')`, [String(linked.id)]);
+    for (const override of overrides) {
+      if (override.field_name === 'club_id') clubId = override.canonical_value;
+      if (override.field_name === 'position') {
+        position = override.canonical_value as NormalizedPlayer['position'];
+        positionResolved = true;
+      }
+    }
+  }
+  if (!clubId || !position) return 'unchanged';
+  if (linked?.id && !positionResolved && linked.position !== position) {
+    await db.execute(`insert into player_identity_candidates
+      (source,external_id,candidate_player_id,normalized_name,club_id,position,incoming_json,status,
+       first_seen_at,last_seen_at) values($1,$2,$3,$4,$5,$6,$7::jsonb,'PENDING',$8,$8)
+      on conflict(source,external_id,candidate_player_id) do update set incoming_json=excluded.incoming_json,
+        status='PENDING',last_seen_at=excluded.last_seen_at`,
+    [value.external.source, value.external.externalId, String(linked.id), value.normalizedName,
+      clubId, position, JSON.stringify(value), now()]);
+    return 'unchanged';
+  }
+  if (!linked) {
+    linked = await db.maybeOne<Row>(`select p.* from player_identity_resolutions r
+      join players p on p.id=r.canonical_player_id
+      where r.source=$1 and r.external_id=$2 and r.decision='SAME_PERSON'`,
+    [value.external.source, value.external.externalId]);
+    resolvedAlias = Boolean(linked);
+  }
   let playerId = linked?.id ? String(linked.id) : undefined;
   let result: Result = 'unchanged';
   const previousClubId = linked?.club_id == null ? null : String(linked.club_id);
   if (!playerId) {
-    const identity = await db.maybeOne<{ id: string }>(`select id from players where normalized_name=$1
-      and club_id is not distinct from $2 and date_of_birth is not distinct from $3::date`,
-      [value.normalizedName, clubId, value.dateOfBirth]);
+    // A non-null matching birth date plus the semantic roster key is the
+    // minimum evidence accepted for automatic cross-source linkage.
+    const identity = value.dateOfBirth ? await db.maybeOne<{ id: string }>(`select id from players where normalized_name=$1
+      and club_id=$2 and position=$3 and date_of_birth=$4::date and merged_into_player_id is null`,
+      [value.normalizedName, clubId, position, value.dateOfBirth]) : undefined;
+    if (!identity) {
+      // Serialize review-candidate creation for this semantic key. A matching
+      // name/club/position is evidence for review, never proof of identity.
+      await db.execute('select pg_advisory_xact_lock(hashtext($1))',
+        [`player-candidate:${value.normalizedName}:${clubId}:${position}`]);
+      const candidates = await db.query<{ id: string }>(`select id from players where normalized_name=$1
+        and club_id=$2 and position=$3 and active=true and merged_into_player_id is null`,
+      [value.normalizedName, clubId, position]);
+      if (candidates.length) {
+        for (const candidate of candidates) await db.execute(`insert into player_identity_candidates
+          (source,external_id,candidate_player_id,normalized_name,club_id,position,incoming_json,status,
+            first_seen_at,last_seen_at) values($1,$2,$3,$4,$5,$6,$7::jsonb,'PENDING',$8,$8)
+          on conflict(source,external_id,candidate_player_id) do update set incoming_json=excluded.incoming_json,
+            last_seen_at=excluded.last_seen_at`,
+        [value.external.source, value.external.externalId, candidate.id, value.normalizedName, clubId,
+          position, JSON.stringify(value), now()]);
+        return 'unchanged';
+      }
+    }
     playerId = identity?.id ?? randomUUID();
     if (!identity) {
       await db.execute(`insert into players(id,club_id,name,position,status,active,updated_at,display_name,
         normalized_name,date_of_birth,nationality,shirt_number,image_url)
         values($1,$2,$3,$4,'ACTIVE',true,$5,$6,$7,$8,$9,$10,$11)`,
-      [playerId, clubId, value.fullName, value.position, now(), value.displayName, value.normalizedName,
+      [playerId, clubId, value.fullName, position, now(), value.displayName, value.normalizedName,
         value.dateOfBirth, value.nationality, value.shirtNumber, value.imageUrl]);
       result = 'created';
       await db.execute(`insert into player_club_history(id,player_id,from_club_id,to_club_id,source,source_url,detected_at)
@@ -82,9 +144,14 @@ async function upsertPlayer(db: PostgresExecutor, value: NormalizedPlayer): Prom
       player_id=excluded.player_id,source_url=excluded.source_url,updated_at=excluded.updated_at`,
     [playerId, value.external.source, value.external.externalId, value.external.sourceUrl, now()]);
   }
-  const changed = Boolean(linked) && (
+  if (!externalLinkExisted) await db.execute(`insert into player_external_ids
+    (player_id,source,external_id,source_url,created_at,updated_at) values($1,$2,$3,$4,$5,$5)
+    on conflict(source,external_id) do update set player_id=excluded.player_id,
+      source_url=excluded.source_url,updated_at=excluded.updated_at`,
+  [playerId!, value.external.source, value.external.externalId, value.external.sourceUrl, now()]);
+  const changed = Boolean(linked) && !resolvedAlias && (
     linked!.name !== value.fullName || linked!.display_name !== value.displayName || linked!.club_id !== clubId ||
-    linked!.position !== value.position || String(linked!.date_of_birth ?? '') !== String(value.dateOfBirth ?? '') ||
+    linked!.position !== position || String(linked!.date_of_birth ?? '') !== String(value.dateOfBirth ?? '') ||
     linked!.nationality !== value.nationality || Number(linked!.shirt_number ?? 0) !== Number(value.shirtNumber ?? 0) ||
     linked!.image_url !== value.imageUrl
   );
@@ -98,7 +165,7 @@ async function upsertPlayer(db: PostgresExecutor, value: NormalizedPlayer): Prom
     }
     await db.execute(`update players set club_id=$1,name=$2,display_name=$3,normalized_name=$4,position=$5,
       date_of_birth=$6,nationality=$7,shirt_number=$8,image_url=$9,updated_at=$10 where id=$11`,
-    [clubId, value.fullName, value.displayName, value.normalizedName, value.position, value.dateOfBirth,
+    [clubId, value.fullName, value.displayName, value.normalizedName, position, value.dateOfBirth,
       value.nationality, value.shirtNumber, value.imageUrl, now(), playerId]);
     result = 'updated';
   } else if (!linked) {
@@ -152,6 +219,10 @@ async function upsertMatch(db: PostgresExecutor, value: NormalizedMatch): Promis
 }
 
 async function upsertPlayerStat(db: PostgresExecutor, value: NormalizedPlayerStat): Promise<Result> {
+  const unresolved = await db.maybeOne<{ present: boolean }>(`select true as present from player_identity_candidates
+    where source=$1 and external_id=$2 and status='PENDING' limit 1`,
+  [value.external.source, value.playerExternalId]);
+  if (unresolved) return 'unchanged';
   const player = await db.maybeOne<{ id: string }>('select player_id as id from player_external_ids where source=$1 and external_id=$2',
     [value.external.source, value.playerExternalId]);
   const match = await db.maybeOne<{ id: string }>('select match_id as id from match_external_ids where source=$1 and external_id=$2',

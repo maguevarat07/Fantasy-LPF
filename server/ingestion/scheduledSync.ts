@@ -336,7 +336,10 @@ async function updateTournamentRoster(db: ReturnType<typeof getPostgresDatabase>
       [transfermarkt.finishedAt]);
       await tx.execute(`update tournament_players set active=exists(select 1 from tournament_roster_registrations r
         where r.tournament_id='apertura-2026' and r.source='TRANSFERMARKT' and r.active=true
-          and r.player_id=tournament_players.player_id) where tournament_id='apertura-2026'`);
+          and r.player_id=tournament_players.player_id)
+        and not exists(select 1 from player_field_resolutions f where f.player_id=tournament_players.player_id
+          and f.field_name='tournament_active' and f.canonical_value='false')
+        where tournament_id='apertura-2026'`);
     }
   });
 }

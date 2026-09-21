@@ -82,11 +82,12 @@ describe.skipIf(!testUrl)('pipeline durable con PostgreSQL real y RLS activo', (
     }
     await db.execute('create table app_schema_migrations(version text primary key, checksum text not null, applied_at timestamptz not null default now())');
     for (const file of ['202609190001_rls_isolation.sql','202609190002_durable_pipeline.sql',
-      '202609190003_ingest_payload.sql']) {
+      '202609190003_ingest_payload.sql','202609200002_player_identity_integrity.sql',
+      '202609210001_identity_conflict_resolution.sql', '202609210002_pricing_input_snapshot.sql']) {
       await db.execute((await readFile(`supabase/migrations/${file}`, 'utf8')).replaceAll('public.', `"${schema}".`));
     }
     await db.execute(`grant usage on schema "${schema}" to fantasy_lpf_app`);
-  }, 120_000);
+  }, 180_000);
 
   beforeEach(async () => {
     expect((await db.one<{ name: string }>('select current_schema() as name')).name).toBe(schema);
@@ -112,11 +113,23 @@ describe.skipIf(!testUrl)('pipeline durable con PostgreSQL real y RLS activo', (
     expect((await db.one<{ count: number }>('select count(*)::int as count from player_fantasy_points')).count).toBe(2);
     expect((await db.one<{ total_points: number }>('select total_points from team_gameweek_scores')).total_points).toBeGreaterThan(0);
     expect((await db.one<{ count: number }>('select count(*)::int as count from pricing_runs where status=\'COMPLETED\'')).count).toBe(1);
+    const run = await db.one<{ input_hash: string; input_snapshot_json: string }>(
+      "select input_hash,input_snapshot_json from pricing_runs where status='COMPLETED'");
+    const { replayPricingInputSnapshot } = await import('../pricingEngine.js');
+    const replayed = replayPricingInputSnapshot(run.input_snapshot_json, run.input_hash);
+    const persisted = await db.query<{ player_id: string; previous_price_cents: string; current_price_cents: string;
+      fair_price_cents: string }>(`select player_id,previous_price_cents,current_price_cents,fair_price_cents
+      from player_price_history order by player_id`);
+    expect(replayed.map(quote => ({ id: quote.playerId, previous: quote.previousPriceCents,
+      current: quote.currentPriceCents, fair: quote.fairPriceCents }))).toEqual(persisted.map(row => ({
+      id: row.player_id, previous: Number(row.previous_price_cents),
+      current: Number(row.current_price_cents), fair: Number(row.fair_price_cents),
+    })));
     const price = await db.one<{ price_cents: string }>("select price_cents from tournament_players where player_id='player-a'");
     const repeated = await (await import('../postgres/economy.js')).recalculateLatestPricesPostgres(db);
     expect('idempotent' in repeated && repeated.idempotent).toBe(true);
     expect((await db.one<{ price_cents: string }>("select price_cents from tournament_players where player_id='player-a'")).price_cents).toBe(price.price_cents);
-  }, 120_000);
+  }, 180_000);
 
   it('conflicto informativo conserva scoring y pricing', async () => {
     const deps = { db, ingest: async () => report([], 1) };
@@ -210,6 +223,84 @@ describe.skipIf(!testUrl)('pipeline durable con PostgreSQL real y RLS activo', (
     await persistEntities(repository, [], [value, { ...value, externalEntityId: 'qa-observation-2' }]);
     await persistEntities(repository, [], [value]);
     expect((await db.one<{ count: number }>("select count(*)::int as count from source_observations where parser_version='qa'")).count).toBe(2);
+  }, 120_000);
+
+  it('cuarentena una coincidencia semántica sin crear ni fusionar otro jugador', async () => {
+    const repository = createPostgresCanonicalDataRepository(db);
+    const candidate = {
+      kind: 'player' as const,
+      fullName: 'Jugador A', displayName: 'Jugador A', normalizedName: 'jugador a',
+      clubName: 'Plaza Amador', normalizedClubName: 'plaza amador', position: 'FWD' as const,
+      dateOfBirth: null, nationality: 'Panamá', shirtNumber: 99, imageUrl: null,
+      external: { source: 'LPF' as const, externalId: 'qa-player-a-lpf', sourceUrl: 'https://qa.invalid/player-a' },
+    };
+    await persistEntities(repository, [candidate], []);
+    await persistEntities(repository, [candidate], []);
+    expect((await db.one<{ count: number }>("select count(*)::int as count from players where normalized_name='jugador a'")).count).toBe(1);
+    expect((await db.one<{ count: number }>("select count(*)::int as count from player_external_ids where source='LPF' and external_id='qa-player-a-lpf'")).count).toBe(0);
+    expect((await db.one<{ count: number }>("select count(*)::int as count from player_identity_candidates where source='LPF' and external_id='qa-player-a-lpf'")).count).toBe(1);
+  }, 120_000);
+
+  it('cuarentena un cambio de posición vinculado y sus estadísticas hasta resolución explícita', async () => {
+    await db.execute(`insert into player_external_ids(player_id,source,external_id,source_url,created_at,updated_at)
+      values('player-a','LPF','qa-linked-player','https://qa.invalid/player-a',now(),now())`);
+    await db.execute(`insert into match_external_ids(match_id,source,external_id,source_url,created_at,updated_at)
+      values('match-a','LPF','qa-linked-match','https://qa.invalid/match-a',now(),now())`);
+    const repository = createPostgresCanonicalDataRepository(db);
+    await persistEntities(repository, [{
+      kind: 'player' as const, fullName: 'Jugador A', displayName: 'Jugador A', normalizedName: 'jugador a',
+      clubName: 'Plaza Amador', normalizedClubName: 'plaza amador', position: 'MID' as const,
+      dateOfBirth: null, nationality: 'Panamá', shirtNumber: 9, imageUrl: null,
+      external: { source: 'LPF' as const, externalId: 'qa-linked-player', sourceUrl: 'https://qa.invalid/player-a' },
+    }], []);
+    expect((await db.one<{ position: string }>("select position from players where id='player-a'")).position).toBe('FWD');
+    expect((await db.one<{ count: number }>(`select count(*)::int as count from player_identity_candidates
+      where source='LPF' and external_id='qa-linked-player' and status='PENDING'`)).count).toBe(1);
+    await persistEntities(repository, [{
+      kind: 'player_stat' as const,
+      playerExternalId: 'qa-linked-player', matchExternalId: 'qa-linked-match',
+      external: { source: 'LPF' as const, externalId: 'qa-linked-stat', sourceUrl: 'https://qa.invalid/stat' },
+      starter: true, substituteIn: false, minutes: 90, goals: 9, assists: 0,
+      yellowCards: 0, redCards: 0, ownGoals: 0, saves: 0, clubName: 'Plaza Amador',
+    }], []);
+    expect((await db.one<{ goals: number }>(`select goals from player_match_stats
+      where player_id='player-a' and match_id='match-a'`)).goals).toBe(1);
+  }, 120_000);
+
+  it('una resolución aprobada vincula otra fuente al canónico sin duplicarlo', async () => {
+    await db.execute(`insert into player_identity_resolutions(source,external_id,canonical_player_id,decision,
+      evidence_summary,resolved_at,resolved_by) values('LPF','qa-resolved-player','player-a','SAME_PERSON','qa',now(),'qa')`);
+    const repository = createPostgresCanonicalDataRepository(db);
+    await persistEntities(repository, [{
+      kind: 'player' as const,
+      fullName: 'Jugador A', displayName: 'Jugador A', normalizedName: 'jugador a',
+      clubName: 'Plaza Amador', normalizedClubName: 'plaza amador', position: 'FWD' as const,
+      dateOfBirth: null, nationality: 'Panamá', shirtNumber: 9, imageUrl: null,
+      external: { source: 'LPF' as const, externalId: 'qa-resolved-player', sourceUrl: 'https://qa.invalid/resolved' },
+    }], []);
+    expect((await db.one<{ count: number }>("select count(*)::int as count from players where normalized_name='jugador a'")).count).toBe(1);
+    expect((await db.one<{ player_id: string }>("select player_id from player_external_ids where source='LPF' and external_id='qa-resolved-player'")).player_id).toBe('player-a');
+  }, 120_000);
+
+  it('una resolución de campo y un alias histórico no sobrescriben el canónico', async () => {
+    await db.execute(`insert into player_field_resolutions(player_id,field_name,canonical_value,evidence_summary,resolved_at,resolved_by)
+      values('player-a','position','MID','qa',now(),'qa')`);
+    await db.execute("update players set position='MID' where id='player-a'");
+    await db.execute(`insert into player_identity_resolutions(source,external_id,canonical_player_id,retired_player_id,
+      decision,evidence_summary,resolved_at,resolved_by) values('LPF','qa-historic','player-a','player-b',
+      'SAME_PERSON','qa',now(),'qa')`);
+    await db.execute(`insert into player_external_ids(player_id,source,external_id,source_url,created_at,updated_at)
+      values('player-a','LPF','qa-historic','https://qa.invalid/historic',now(),now())`);
+    const repository = createPostgresCanonicalDataRepository(db);
+    await persistEntities(repository, [{
+      kind: 'player', fullName: 'Nombre Histórico', displayName: 'Nombre Histórico',
+      normalizedName: 'nombre historico', clubName: 'Tauro FC', normalizedClubName: 'tauro',
+      position: 'FWD', dateOfBirth: null, nationality: null, shirtNumber: null, imageUrl: null,
+      external: { source: 'LPF', externalId: 'qa-historic', sourceUrl: 'https://qa.invalid/historic' },
+    }], []);
+    const player = await db.one<{ name: string; position: string; club_id: string }>(
+      "select name,position,club_id from players where id='player-a'");
+    expect(player).toEqual({ name: 'Jugador A', position: 'MID', club_id: 'club-a' });
   }, 120_000);
 
   it('expone al rol de aplicación la alerta de jornada vencida sin abrir las tablas internas', async () => {
