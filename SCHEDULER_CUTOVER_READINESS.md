@@ -1,36 +1,24 @@
-# Migración del scheduler a Supabase — estado de preparación
+# Migración del scheduler a Supabase — cutover productivo
 
-Fecha: 2026-09-21. Rama local: `supabase-scheduler-cutover`. **No desplegada.** Vercel Cron sigue configurado; Supabase Cron productivo no existe. La instalación de migraciones productivas fue bloqueada por la revisión automática y no se reintentó por otra vía.
+Fecha del cutover: 2026-09-22 UTC. Código productivo: `0f0ae25c130469b764953c65fc5c5cfe8b0ff1a8`.
 
-## Implementado y verificado localmente
+## Estado verificado
 
-- `api/automation/worker.ts` comprueba el secreto interno y devuelve 503 si `SUPABASE_PRODUCTIVE_WORKER_ENABLED` no es `true`. Atiende un mensaje por request. Publica el siguiente mensaje y archiva el actual dentro de una misma transacción.
-- Publicación en lotes de 50 entidades/100 observaciones; scoring en lotes de tres jornadas con `pipeline_runs.score_cursor`. El cursor solo avanza tras completar cada lote. La ruta Vercel Cron antigua conserva su tamaño de lote anterior.
-- `supabase/migrations/202609200001_pipeline_queue.sql` crea la cola Basic `fantasy_pipeline` y dispatcher idempotente sin instalar Cron. `202609210003` añade el cursor. `202609210004` instala `pg_net`, función de wake-up que lee el secreto de Vault y una tabla de solicitudes, sin instalar Cron.
-- `scripts/activate-supabase-scheduler.sql` agenda dispatcher cada minuto y limpieza semanal de mensajes archivados mayores de 30 días. `scripts/pause-supabase-scheduler.sql` desprograma ambas tareas y conserva la cola, run y checkpoints.
-- El migrador acepta una lista exacta de archivos para evitar aplicar migraciones históricas fuera de este alcance.
-- Regresión: 115/115 tests, 23/23 archivos; typecheck, lint y build pasan. Pruebas PostgreSQL QA cubren cola, retry, visibility timeout, checkpoints, RLS y scoring por jornadas. No se ha probado aún `pg_net` productivo ni la URL Vercel del worker.
+- Vercel conserva frontend, API y worker `api/automation/worker.ts`. El deployment está READY y el panel Project Settings → Cron Jobs no lista tareas; `vercel.json` no tiene `crons`.
+- Supabase PostgreSQL ejecutó las migraciones `202609200001`, `202609210003` y `202609210004`–`202609210007`. `pg_cron`, `pgmq` y `pg_net` están instalados; la cola Basic `fantasy_pipeline` y el secreto de Vault existen. El secreto no se almacena en Git ni se registra aquí.
+- `fantasy_pipeline_dispatch` está activo cada minuto para despertar mensajes y crear un nuevo ciclo cuando el último terminó hace al menos 24 horas. `fantasy_pipeline_archive_prune` limpia los mensajes archivados mayores de 30 días los domingos.
+- `SUPABASE_PRODUCTIVE_WORKER_ENABLED=true` en Vercel Production. El worker exige `PIPELINE_WORKER_SECRET`; los usuarios `anon`, `authenticated` y `fantasy_lpf_app` no pueden ejecutar el dispatcher interno.
 
-## Orden de despliegue y validación pendiente
+## Evidencia de prueba productiva
 
-1. Confirmar autorización explícita en un mensaje para cambiar esquema, secretos y schedulers productivos.
-2. Aplicar las tres migraciones seleccionadas, sin instalar Cron. Verificar `pgmq.list_queues()`, columnas, funciones, `pg_extension` y RLS. Confirmar que no hay jobs en `cron.job`.
-3. Desplegar esta rama **con las 24 entradas Cron de Vercel intactas**. El flag permanece OFF. Verificar deployment SHA y endpoint: 401 sin secreto, 503 con secreto y flag apagado.
-4. Crear un secreto aleatorio dedicado de al menos 32 caracteres, guardarlo en `PIPELINE_WORKER_SECRET` de Vercel Production y en Supabase Vault con nombre `fantasy_pipeline_worker_secret`. No guardarlo en Git, navegador ni logs. Se requiere intervención del usuario para introducir una credencial nueva en el panel web de Vercel.
-5. Encender temporalmente el flag para una invocación productiva controlada, lejos de un Vercel Cron activo. Verificar un mensaje, lease, checkpoint, retry, ausencia de duplicados y respuesta HTTP. Dejar Cron Supabase sin programar durante la prueba.
-6. Solo si todo pasa: comprobar que no hay worker/lease activo, desplegar `vercel.json` sin `crons` y verificar el deployment. Ejecutar `scripts/activate-supabase-scheduler.sql`. Registrar hora UTC, primer `cron.job_run_details`, `pipeline_runs`, cola, logs del worker y estado final.
-7. Probar pausa SQL sin borrar mensajes. Para rollback real: pausar Supabase Cron, poner el flag OFF, esperar visibilidad/lease, restaurar el deployment Vercel con las 24 entradas Cron y permitir que continúe desde el mismo `pipeline_runs`.
+Run `7da23915-ee24-4f07-a8bb-679801c6718b`: INGESTED → PUBLISHING → RECONCILED → SCORING → SCORED → PRICED; sin `last_error`. Procesó 4 558 registros obtenidos y aceptó 1 553. El checkpoint avanzó por 1 470 entidades y 2 647 observaciones. Tiempos acumulados: ingestión 84 473 ms, publicación 56 014 ms, scoring 6 083 ms, pricing 3 357 ms. El pricing run de `apertura-2026-gw-9` terminó `COMPLETED` a las 03:28:34 UTC.
 
-## Puertas actuales
+Hubo dos fallos detectados y corregidos antes del cutover: el uso de `now()` no veía el mensaje recién creado por `pgmq.send` dentro de la misma transacción (`202609210005` usa `clock_timestamp()`), y el timeout HTTP de 10 s ocultaba el resultado de la ingestión de 84 s (`202609210006` usa 290 s). La prueba repetida devolvió 200 y archivó los mensajes de forma atómica. Lint, typecheck y build pasaron; la suite QA previa tuvo 115/115 tests.
 
-PG_CRON: instalado, no programado para producción.
-PG_NET: pendiente de instalar.
-PGMQ: extensión instalada; cola productiva pendiente.
-VAULT: extensión instalada; secreto dedicado pendiente.
-WORKER: probado localmente, no desplegado.
-SUPABASE CRON PRODUCTIVO: OFF.
-VERCEL CRON: ON.
-CUTOVER: NO.
-AUTOMATIC SUPABASE INVOCATION: NOT YET OBSERVED.
+Cron productivo invocó el dispatcher automáticamente desde las 03:30 UTC. Prueba automática completa de entrega a las **03:34:00 UTC**: mensaje 61 para un run ya PRICED → wake-up `pg_net` 61 → worker HTTP 200 → archivo en `pgmq.a_fantasy_pipeline` a las 03:34:00.724 UTC. No se creó otro run; cola vacía y ningún lease activo.
 
-La migración solo se puede declarar operativa después de un ciclo automático real y de comprobar las invariantes de datos productivos.
+## Condiciones y operación
+
+El run tuvo `quality_status=PARTIAL` por 71 conflictos de identidad bloqueantes aislados y uno no bloqueante ya presentes; su `scoring_status=SCORED` y `pricing_status=PRICED`. Estos conflictos requieren revisión de datos, pero no bloquearon las entidades no afectadas. La próxima creación automática de un ciclo nuevo después del guard de 24 horas **todavía no se ha observado**; no se debe confundir la prueba automática del wake-up con un nuevo ciclo completo automático.
+
+Para pausar, ejecutar `scripts/pause-supabase-scheduler.sql`; conserva run, cola y checkpoints. Para rollback: pausar Supabase Cron, apagar el flag del worker, esperar a que cese el lease y restaurar un deployment Vercel con los Cron anteriores. No activar ambos programadores de forma permanente.
