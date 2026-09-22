@@ -18,6 +18,9 @@
     },
     "api/cron/recover.ts": {
       "maxDuration": 300
+    },
+    "api/automation/worker.ts": {
+      "maxDuration": 300
     }
   },
   "crons": [

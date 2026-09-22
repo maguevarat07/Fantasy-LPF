@@ -83,7 +83,8 @@ describe.skipIf(!testUrl)('pipeline durable con PostgreSQL real y RLS activo', (
     await db.execute('create table app_schema_migrations(version text primary key, checksum text not null, applied_at timestamptz not null default now())');
     for (const file of ['202609190001_rls_isolation.sql','202609190002_durable_pipeline.sql',
       '202609190003_ingest_payload.sql','202609200002_player_identity_integrity.sql',
-      '202609210001_identity_conflict_resolution.sql', '202609210002_pricing_input_snapshot.sql']) {
+      '202609210001_identity_conflict_resolution.sql', '202609210002_pricing_input_snapshot.sql',
+      '202609210003_pipeline_score_cursor.sql']) {
       await db.execute((await readFile(`supabase/migrations/${file}`, 'utf8')).replaceAll('public.', `"${schema}".`));
     }
     await db.execute(`grant usage on schema "${schema}" to fantasy_lpf_app`);
@@ -130,6 +131,24 @@ describe.skipIf(!testUrl)('pipeline durable con PostgreSQL real y RLS activo', (
     expect('idempotent' in repeated && repeated.idempotent).toBe(true);
     expect((await db.one<{ price_cents: string }>("select price_cents from tournament_players where player_id='player-a'")).price_cents).toBe(price.price_cents);
   }, 180_000);
+
+  it('reanuda scoring por jornada sin repetir el batch completado', async () => {
+    await db.execute(`insert into gameweeks(id,tournament_id,week_number,name,deadline_at,status)
+      values('gw-2','apertura-2026',2,'QA GW2','2026-09-12T01:00:00Z','FINISHED')`);
+    const scored: string[] = [];
+    const deps = { db, ingest: async () => report(), scoreGameweekBatchSize: 1,
+      scoreGameweek: async (_database: PostgresDatabase, gameweekId: string) => {
+        scored.push(gameweekId);
+        return { players: 0, teams: 0 };
+      } };
+    expect((await runScheduledDataSync(deps)).stage).toBe('INGESTED');
+    expect((await runScheduledDataSync(deps)).stage).toBe('RECONCILED');
+    expect((await runScheduledDataSync(deps)).stage).toBe('SCORING');
+    expect((await db.one<{ score_cursor: number }>('select score_cursor from pipeline_runs')).score_cursor).toBe(1);
+    expect((await runScheduledDataSync(deps)).stage).toBe('SCORED');
+    expect(scored).toEqual(['gw-1', 'gw-2']);
+    expect((await db.one<{ score_cursor: number }>('select score_cursor from pipeline_runs')).score_cursor).toBe(2);
+  }, 120_000);
 
   it('conflicto informativo conserva scoring y pricing', async () => {
     const deps = { db, ingest: async () => report([], 1) };

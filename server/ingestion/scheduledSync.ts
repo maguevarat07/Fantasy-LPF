@@ -21,6 +21,7 @@ interface PipelineRun extends Record<string, unknown> {
   conflicts_blocking: number;
   conflicts_non_blocking: number;
   quality_status: string;
+  score_cursor: number;
 }
 
 export function nextPipelineStage(stage: PipelineStage): NextStage {
@@ -56,6 +57,7 @@ export interface ScheduledSyncDependencies {
   ingest?: () => Promise<SyncReport>;
   publishEntityBatchSize?: number;
   publishObservationBatchSize?: number;
+  scoreGameweekBatchSize?: number;
   scoreGameweek?: typeof recalculateGameweekPostgres;
   price?: typeof recalculateLatestPricesPostgres;
 }
@@ -152,19 +154,32 @@ export async function runScheduledDataSync(dependencies: ScheduledSyncDependenci
       }
       if (pending === 'SCORE') {
         const finished = await db.query<{ id: string }>("select id from gameweeks where status='FINISHED' order by week_number");
-        let incomplete = 0;
-        for (const gameweek of finished) {
+        const scoreCursor = Number(run.score_cursor ?? 0);
+        const scoreLimit = Math.max(1, dependencies.scoreGameweekBatchSize ?? finished.length);
+        const batch = finished.slice(scoreCursor, scoreCursor + scoreLimit);
+        for (const gameweek of batch) {
           const matches = await db.one<{ total: number; confirmed: number }>(`select count(*)::int as total,
             count(*) filter(where score_status in ('CONFIRMED','CORRECTED'))::int as confirmed
             from matches where gameweek_id=$1`, [gameweek.id]);
           await (dependencies.scoreGameweek ?? recalculateGameweekPostgres)(db, gameweek.id);
           const gameweekStatus = matches.total > 0 && matches.total === matches.confirmed ? 'SCORED' : 'PARTIAL';
-          if (gameweekStatus !== 'SCORED') incomplete += 1;
           await db.execute(`insert into pipeline_gameweek_status(gameweek_id,scoring_status,scored_at,
             last_run_id,updated_at) values($1,$2,now(),$3,now()) on conflict(gameweek_id) do update
             set scoring_status=excluded.scoring_status,scored_at=excluded.scored_at,
               last_run_id=excluded.last_run_id,updated_at=excluded.updated_at`, [gameweek.id, gameweekStatus, run.id]);
         }
+        const nextScoreCursor = scoreCursor + batch.length;
+        if (nextScoreCursor < finished.length) {
+          await db.execute(`update pipeline_runs set stage='SCORING',score_cursor=$1,attempts=0,
+            updated_at=now(),stage_durations_json=jsonb_set(stage_durations_json,
+            '{score}',to_jsonb(coalesce((stage_durations_json->>'score')::bigint,0)+$2::bigint),true)
+            where id=$3`, [nextScoreCursor, Date.now() - stageStartedAt, run.id]);
+          return { runId: run.id, startedAt, finishedAt: new Date().toISOString(),
+            status: 'PARTIAL', stage: 'SCORING', nextStage: 'SCORE' };
+        }
+        const incomplete = (await db.one<{ count: number }>(`select count(*)::int as count
+          from gameweeks gw left join pipeline_gameweek_status pgs on pgs.gameweek_id=gw.id
+          where gw.status='FINISHED' and coalesce(pgs.scoring_status,'PENDING') <> 'SCORED'`)).count;
         await db.execute(`update pipeline_gameweek_status pgs set pricing_status='PRICED',
           priced_at=historic.completed_at,updated_at=now() from
           (select as_of_gameweek_id,max(completed_at) as completed_at from pricing_runs
@@ -172,9 +187,11 @@ export async function runScheduledDataSync(dependencies: ScheduledSyncDependenci
           where historic.as_of_gameweek_id=pgs.gameweek_id
             and pgs.pricing_status <> 'PRICED'`);
         await db.execute(`update pipeline_runs set stage='SCORED',scoring_status=$1,
-          updated_at=now(),attempts=0,stage_durations_json=jsonb_set(stage_durations_json,
-          '{score}',to_jsonb($2::bigint),true) where id=$3`,
-        [incomplete ? 'PARTIAL' : 'SCORED', Date.now() - stageStartedAt, run.id]);
+          updated_at=now(),attempts=0,score_cursor=$2,
+          stage_durations_json=jsonb_set(stage_durations_json,
+          '{score}',to_jsonb(coalesce((stage_durations_json->>'score')::bigint,0)+$3::bigint),true)
+          where id=$4`,
+        [incomplete ? 'PARTIAL' : 'SCORED', nextScoreCursor, Date.now() - stageStartedAt, run.id]);
         return { runId: run.id, startedAt, finishedAt: new Date().toISOString(),
           status: incomplete ? 'PARTIAL' : run.quality_status === 'WORKING' ? 'WORKING' : 'PARTIAL',
           stage: 'SCORED', nextStage: 'PRICE' };

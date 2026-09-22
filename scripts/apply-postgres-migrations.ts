@@ -8,6 +8,11 @@ import { createHttpPostgresDatabase, runHttpTransaction } from './httpPostgresCl
 async function main() {
   const directory = resolve(process.cwd(), 'supabase', 'migrations');
   const files = (await readdir(directory)).filter(file => file.endsWith('.sql')).sort();
+  const selected = process.argv.slice(2);
+  if (selected.some(file => !files.includes(file))) {
+    throw new Error('Se solicitó una migración inexistente o fuera del directorio permitido.');
+  }
+  const pendingFiles = selected.length ? files.filter(file => selected.includes(file)) : files;
   const useHttp = Boolean(process.env.MIGRATION_HTTP_URL);
   const db = useHttp
     ? createHttpPostgresDatabase()
@@ -16,7 +21,7 @@ async function main() {
     await db.execute(`create table if not exists app_schema_migrations(
       version text primary key, checksum text not null, applied_at timestamptz not null default now()
     )`);
-    for (const file of files) {
+    for (const file of pendingFiles) {
       const sql = await readFile(resolve(directory, file), 'utf8');
       const checksum = createHash('sha256').update(sql).digest('hex');
       const applied = await db.maybeOne<{ checksum: string }>(
