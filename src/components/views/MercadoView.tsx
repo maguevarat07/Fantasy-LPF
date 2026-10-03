@@ -28,7 +28,8 @@ export const MercadoView: React.FC<MercadoViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPos, setSelectedPos] = useState<'ALL' | Position>('ALL');
   const [selectedClub, setSelectedClub] = useState('ALL');
-  const [sortBy, setSortBy] = useState<'pts' | 'forma' | 'precio' | 'ratio'>('pts');
+  const [sortBy, setSortBy] = useState<'pts' | 'forma' | 'precio' | 'nombre'>('pts');
+  const [sortDescending, setSortDescending] = useState(true);
   const clubs = useMemo(() => Array.from(new Map<string, { id: string; name: string }>(players.map(player => [player.clubId, {
     id: player.clubId, name: player.clubName,
   }])).values()).sort((a, b) => a.name.localeCompare(b.name)), [players]);
@@ -42,13 +43,13 @@ export const MercadoView: React.FC<MercadoViewProps> = ({
         return matchesQuery && matchesPos && matchesClub;
       })
       .sort((a, b) => {
-        if (sortBy === 'pts') return b.totalPoints - a.totalPoints;
-        if (sortBy === 'forma') return b.recentForm - a.recentForm;
-        if (sortBy === 'precio') return (b.currentPrice ?? b.price) - (a.currentPrice ?? a.price);
-        if (sortBy === 'ratio') return (b.totalPoints / (b.currentPrice ?? b.price)) - (a.totalPoints / (a.currentPrice ?? a.price));
-        return 0;
+        const comparison = sortBy === 'pts' ? a.totalPoints - b.totalPoints
+          : sortBy === 'forma' ? a.recentForm - b.recentForm
+          : sortBy === 'precio' ? (a.currentPrice ?? a.price) - (b.currentPrice ?? b.price)
+          : a.displayName.localeCompare(b.displayName, 'es');
+        return (sortDescending ? -comparison : comparison) || a.displayName.localeCompare(b.displayName, 'es');
       });
-  }, [players, searchQuery, selectedPos, selectedClub, sortBy]);
+  }, [players, searchQuery, selectedPos, selectedClub, sortBy, sortDescending]);
 
   const allOwnedIds = useMemo(() => new Set([...userStarterIds, ...userBenchIds]), [userStarterIds, userBenchIds]);
 
@@ -144,19 +145,28 @@ export const MercadoView: React.FC<MercadoViewProps> = ({
           <div className="relative">
             <select
               value={sortBy}
-              onChange={e => setSortBy(e.target.value as any)}
+              onChange={e => setSortBy(e.target.value as 'pts' | 'forma' | 'precio' | 'nombre')}
+              aria-label="Ordenar jugadores por"
               className="w-full appearance-none bg-surface-container-low text-on-surface font-label-md text-label-md py-2 pl-space-sm pr-8 rounded-lg focus:outline-none focus:bg-surface-container-high transition-colors"
             >
               <option value="pts">Puntos Totales</option>
               <option value="forma">Forma Reciente</option>
               <option value="precio">Precio ($)</option>
-              <option value="ratio">Valor / Puntos</option>
+              <option value="nombre">Nombre</option>
             </select>
             <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-space-xs text-primary">
               <span className="material-symbols-outlined text-[18px]">swap_vert</span>
             </div>
           </div>
         </div>
+        <button
+          type="button"
+          onClick={() => setSortDescending(current => !current)}
+          aria-label={sortDescending ? 'Orden descendente; cambiar a ascendente' : 'Orden ascendente; cambiar a descendente'}
+          className="w-full rounded-lg bg-surface-container-low px-space-sm py-2 text-left font-label-md text-on-surface hover:bg-surface-container-high"
+        >
+          {sortBy === 'nombre' ? (sortDescending ? '↓ Z a A' : '↑ A a Z') : (sortDescending ? '↓ Mayor a menor' : '↑ Menor a mayor')}
+        </button>
       </div>
 
       {/* Players List Roster */}

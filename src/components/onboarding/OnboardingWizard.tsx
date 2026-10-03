@@ -5,6 +5,8 @@ import { userDatabase } from '../../services/userDatabase';
 import { leagueService, PrivateLeagueRecord } from '../../services/leagueService';
 import { lpfDataService } from '../../services/lpfDataService';
 import { Player, Position, Formation } from '../../types/fantasy';
+import { positionLabel } from '../../domain/positionLabels';
+import { LPF_LOGO_URL } from '../../data/assets';
 import { PitchPlayerCard, pitchCardSpringTransition } from '../shared/PitchPlayerCard';
 import {
   Shield,
@@ -47,6 +49,8 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ user, tourna
   const [marketSearch, setMarketSearch] = useState('');
   const [marketPosition, setMarketPosition] = useState<Position | 'ALL'>('ALL');
   const [marketClub, setMarketClub] = useState<string>('ALL');
+  const [marketSort, setMarketSort] = useState<'price' | 'form' | 'points' | 'name'>('price');
+  const [marketSortDescending, setMarketSortDescending] = useState(true);
 
   // Step 3: Formation & Starting XI
   const [formation, setFormation] = useState<Formation>('4-3-3');
@@ -147,8 +151,14 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ user, tourna
         if (!matchesName && !matchesClub) return false;
       }
       return true;
+    }).sort((a, b) => {
+      const value = marketSort === 'price' ? a.price - b.price
+        : marketSort === 'form' ? a.recentForm - b.recentForm
+        : marketSort === 'points' ? a.totalPoints - b.totalPoints
+        : a.displayName.localeCompare(b.displayName, 'es');
+      return (marketSortDescending ? -value : value) || a.displayName.localeCompare(b.displayName, 'es');
     });
-  }, [allPlayers, selectedPlayerIds, marketPosition, marketClub, marketSearch]);
+  }, [allPlayers, selectedPlayerIds, marketPosition, marketClub, marketSearch, marketSort, marketSortDescending]);
 
   // Add player to squad
   const handleAddPlayer = (p: Player) => {
@@ -344,15 +354,14 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ user, tourna
       <div className="w-full bg-[#161b22] border-b border-white/10 sticky top-0 z-30 px-4 py-3">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="font-extrabold text-xs tracking-wider uppercase bg-gradient-to-r from-emerald-400 to-teal-200 bg-clip-text text-transparent">
-              Onboarding Fantasy LPF
-            </span>
+            <img src={LPF_LOGO_URL} alt="Liga Panameña de Fútbol" className="h-9 w-auto max-w-24 object-contain" />
             <span className="text-zinc-500 text-xs">·</span>
             <span className="text-xs font-bold text-zinc-300">Paso {currentStep} de 6</span>
           </div>
 
+          <div className="flex items-center gap-2">
           {/* Stepper Dots */}
-          <div className="flex items-center gap-1.5">
+          <div className="hidden sm:flex items-center gap-1.5">
             {[1, 2, 3, 4, 5, 6].map(s => (
               <div
                 key={s}
@@ -365,6 +374,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ user, tourna
                 }`}
               />
             ))}
+          </div>
           </div>
         </div>
       </div>
@@ -551,7 +561,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ user, tourna
                             p.position === 'MID' ? 'bg-emerald-500/20 text-emerald-300' :
                             'bg-rose-500/20 text-rose-300'
                           }`}>
-                            {p.position}
+                            {positionLabel(p.position)}
                           </span>
                           <div>
                             <span className="text-xs font-bold text-white block leading-tight">
@@ -624,9 +634,26 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ user, tourna
                             : 'text-zinc-400 hover:text-white'
                         }`}
                       >
-                        {pos === 'ALL' ? 'TODOS' : pos === 'GK' ? 'POR' : pos}
+                        {pos === 'ALL' ? 'TODOS' : positionLabel(pos)}
                       </button>
                     ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5" aria-label="Ordenar jugadores">
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase mr-1">Ordenar:</span>
+                    {([['price', 'Precio'], ['form', 'Forma'], ['points', 'Puntos'], ['name', 'Nombre']] as const).map(([sort, label]) => (
+                      <button key={sort} type="button" onClick={() => setMarketSort(sort)}
+                        aria-pressed={marketSort === sort}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${marketSort === sort
+                          ? 'bg-emerald-500 text-black border-emerald-500' : 'border-white/10 text-zinc-400 hover:text-white'}`}>
+                        {label}
+                      </button>
+                    ))}
+                    <button type="button" onClick={() => setMarketSortDescending(value => !value)}
+                      aria-label={marketSortDescending ? 'Orden descendente; cambiar a ascendente' : 'Orden ascendente; cambiar a descendente'}
+                      title={marketSort === 'name' ? (marketSortDescending ? 'Z a A' : 'A a Z') : (marketSortDescending ? 'Mayor a menor' : 'Menor a mayor')}
+                      className="px-2 py-1 rounded-lg text-[10px] font-bold border border-white/10 text-zinc-300 hover:text-white cursor-pointer">
+                      {marketSort === 'name' ? (marketSortDescending ? '↓ Z a A' : '↑ A a Z') : (marketSortDescending ? '↓ Mayor a menor' : '↑ Menor a mayor')}
+                    </button>
                   </div>
                 </div>
 
@@ -657,14 +684,14 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ user, tourna
                               p.position === 'MID' ? 'bg-emerald-500/20 text-emerald-300' :
                               'bg-rose-500/20 text-rose-300'
                             }`}>
-                              {p.position}
+                              {positionLabel(p.position)}
                             </span>
                             <div>
                               <span className="text-xs font-bold text-white block leading-tight">
                                 {p.name}
                               </span>
                               <span className="text-[10px] text-zinc-400">
-                                {p.clubName} · {p.totalPoints} pts
+                                {p.clubName} · {p.totalPoints} pts · Forma {p.recentForm.toFixed(1)}
                               </span>
                             </div>
                           </div>
@@ -679,7 +706,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ user, tourna
                               disabled={cannotAdd}
                               title={
                                 maxClubReached ? 'Máximo 3 jugadores de este club' :
-                                maxPosReached ? `Cupo de ${p.position} completado` :
+                                maxPosReached ? `Cupo de ${positionLabel(p.position)} completado` :
                                 overBudget ? 'Presupuesto insuficiente' :
                                 squadFull ? 'Plantilla de 15 llena' : 'Agregar'
                               }
@@ -881,7 +908,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ user, tourna
                           {p.displayName}
                         </span>
                         <div className="flex items-center justify-between w-full font-label-sm text-[9px] mt-0.5 px-0.5">
-                          <span className="font-bold text-on-surface-variant">{p.position}</span>
+                          <span className="font-bold text-on-surface-variant">{positionLabel(p.position)}</span>
                           <span className="text-primary font-bold">${p.price.toFixed(1)}M</span>
                         </div>
                       </motion.button>
@@ -942,7 +969,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ user, tourna
                     if (!p) return null;
                     return (
                       <option key={p.id} value={p.id} className="bg-[#161b22]">
-                        {p.displayName} ({p.position} · {p.clubName} · Form: {p.recentForm})
+                        {p.displayName} ({positionLabel(p.position)} · {p.clubName} · Forma: {p.recentForm})
                       </option>
                     );
                   })}
@@ -965,7 +992,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ user, tourna
                     if (!p) return null;
                     return (
                       <option key={p.id} value={p.id} disabled={p.id === captainId} className="bg-[#161b22]">
-                        {p.displayName} ({p.position} · {p.clubName}) {p.id === captainId ? '— [Ya es Capitán]' : ''}
+                        {p.displayName} ({positionLabel(p.position)} · {p.clubName}) {p.id === captainId ? '— [Ya es Capitán]' : ''}
                       </option>
                     );
                   })}

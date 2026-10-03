@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Player } from '../../types/fantasy';
+import { positionLabel } from '../../domain/positionLabels';
 
 interface CaptainModalProps {
   starters: Player[];
@@ -127,7 +128,7 @@ export const CaptainModal: React.FC<CaptainModalProps> = ({
                         {player.displayName}
                       </span>
                       <span className="font-label-sm text-[10px] text-on-surface-variant bg-surface-container-highest px-1 rounded">
-                        {player.position}
+                        {positionLabel(player.position)}
                       </span>
                     </div>
                     <span className="font-body-sm text-body-sm text-on-surface-variant">

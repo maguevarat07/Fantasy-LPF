@@ -1,5 +1,6 @@
 import React from 'react';
 import type { FantasyTeam, Player } from '../../types/fantasy';
+import { positionLabel } from '../../domain/positionLabels';
 
 interface DashboardViewProps {
   team: FantasyTeam;
@@ -26,7 +27,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
       <div className="min-w-0">
         <p className="font-title-md text-on-surface truncate">{player?.displayName || 'Sin seleccionar'}</p>
-        <p className="font-body-sm text-on-surface-variant truncate">{player ? `${player.clubName} · ${player.position}` : 'Selecciona un jugador del XI'}</p>
+        <p className="font-body-sm text-on-surface-variant truncate">{player ? `${player.clubName} · ${positionLabel(player.position)}` : 'Selecciona un jugador del XI'}</p>
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { LeagueMember, Player, Formation } from '../../types/fantasy';
+import { positionLabel } from '../../domain/positionLabels';
 
 interface RivalSquadModalProps {
   member: LeagueMember | null;
@@ -242,7 +243,7 @@ export const RivalSquadModal: React.FC<RivalSquadModalProps> = ({
                       className="flex flex-col items-center bg-surface-container p-2 rounded-lg hover:bg-surface-container-high transition-all text-center group border border-surface-container-high/40"
                     >
                       <span className="text-[9px] font-bold text-on-surface-variant uppercase mb-1">
-                        {idx + 1}. {player.position}
+                        {idx + 1}. {positionLabel(player.position)}
                       </span>
                       <div className="w-9 h-9 rounded-full overflow-hidden bg-surface-container-highest shadow-inner mb-1">
                         <img className="w-full h-full object-cover" src={player.imageUrl} alt={player.displayName} />
@@ -299,7 +300,7 @@ export const RivalSquadModal: React.FC<RivalSquadModalProps> = ({
                             )}
                           </div>
                           <span className="font-body-sm text-[11px] text-on-surface-variant truncate">
-                            {player.clubName} · {player.position} · ${player.price.toFixed(1)}M
+                            {player.clubName} · {positionLabel(player.position)} · ${player.price.toFixed(1)}M
                           </span>
                         </div>
                       </div>
@@ -337,7 +338,7 @@ export const RivalSquadModal: React.FC<RivalSquadModalProps> = ({
                           {player.displayName}
                         </span>
                         <span className="font-body-sm text-[10px] text-on-surface-variant">
-                          {player.clubName} · {player.position}
+                          {player.clubName} · {positionLabel(player.position)}
                         </span>
                       </div>
                     </div>

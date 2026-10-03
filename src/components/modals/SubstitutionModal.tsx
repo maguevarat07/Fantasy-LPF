@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Player } from '../../types/fantasy';
+import { positionLabel } from '../../domain/positionLabels';
 
 interface SubstitutionModalProps {
   playerToSubOut: Player | null;
@@ -73,7 +74,7 @@ export const SubstitutionModal: React.FC<SubstitutionModalProps> = ({
                     {playerToSubOut.displayName}
                   </span>
                   <span className="font-label-sm text-[10px] text-on-surface-variant bg-surface-container-highest px-1 rounded">
-                    {playerToSubOut.position}
+                    {positionLabel(playerToSubOut.position)}
                   </span>
                 </div>
                 <span className="font-body-sm text-body-sm text-on-surface-variant">
@@ -116,7 +117,7 @@ export const SubstitutionModal: React.FC<SubstitutionModalProps> = ({
                           {player.displayName}
                         </span>
                         <span className="font-label-sm text-[10px] text-primary bg-primary/20 px-1 rounded font-bold">
-                          {player.position}
+                          {positionLabel(player.position)}
                         </span>
                       </div>
                       <span className="font-body-sm text-body-sm text-on-surface-variant">

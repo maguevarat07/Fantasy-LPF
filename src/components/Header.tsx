@@ -75,15 +75,11 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="material-symbols-outlined text-[22px]">arrow_back_ios_new</span>
             </button>
           ) : (
-            <button 
-              className="flex items-center gap-2 focus:outline-none group text-left"
-              onClick={() => onOpenComodines && onOpenComodines()}
-              title="LPF Fantassy"
-            >
+            <div className="flex items-center gap-2" aria-label="LPF Fantasy">
               {!logoImgFailed ? (
                 <img
                   src={LPF_LOGO_URL}
-                  alt="LPF FANTASSY"
+                  alt="LPF FANTASY"
                   referrerPolicy="no-referrer"
                   onError={() => setLogoImgFailed(true)}
                   className="h-10 w-auto max-w-[140px] object-contain shrink-0"
@@ -100,7 +96,7 @@ export const Header: React.FC<HeaderProps> = ({
                         LPF
                       </span>
                       <span className="font-headline-sm text-[9px] font-bold text-primary bg-primary/20 px-1 py-0.5 rounded leading-none">
-                        FANTASSY
+                        FANTASY
                       </span>
                     </div>
                     <span className="text-[9px] text-on-surface-variant font-medium tracking-wide">
@@ -109,7 +105,7 @@ export const Header: React.FC<HeaderProps> = ({
                   </div>
                 </div>
               )}
-            </button>
+            </div>
           )}
         </div>
 

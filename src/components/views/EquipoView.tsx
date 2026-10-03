@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { Player, Formation, ChipId } from '../../types/fantasy';
+import { positionLabel } from '../../domain/positionLabels';
 import { PitchPlayerCard } from '../shared/PitchPlayerCard';
 
 interface EquipoViewProps {
@@ -348,9 +349,9 @@ export const EquipoView: React.FC<EquipoViewProps> = ({
                     </span>
                     <span className="text-[11px] text-on-surface-variant truncate">
                       {bench.some(b => b.id === quickSwapPlayer.id) ? (
-                        <>Toca un titular del 11 para que ingrese <strong className="text-on-surface">{quickSwapPlayer.displayName}</strong> ({quickSwapPlayer.position})</>
+                        <>Toca un titular del 11 para que ingrese <strong className="text-on-surface">{quickSwapPlayer.displayName}</strong> ({positionLabel(quickSwapPlayer.position)})</>
                       ) : (
-                        <>Toca un suplente de la banca para sustituir a <strong className="text-on-surface">{quickSwapPlayer.displayName}</strong> ({quickSwapPlayer.position})</>
+                        <>Toca un suplente de la banca para sustituir a <strong className="text-on-surface">{quickSwapPlayer.displayName}</strong> ({positionLabel(quickSwapPlayer.position)})</>
                       )}
                     </span>
                   </div>
@@ -666,7 +667,7 @@ export const EquipoView: React.FC<EquipoViewProps> = ({
                       </span>
                       <div className="flex items-center justify-between w-full font-label-sm text-[9px] mt-0.5 px-0.5">
                         <span className={`font-bold ${isCandidate && isSamePos ? 'text-primary' : 'text-on-surface-variant'}`}>
-                          {player.position}
+                          {positionLabel(player.position)}
                         </span>
                         <span className="text-primary font-bold">${player.price.toFixed(1)}M</span>
                       </div>
