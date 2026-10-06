@@ -25,9 +25,19 @@ Overview muestra conteos reales; Users ofrece búsqueda y filtros acotados; User
 
 Un operador de base de datos confiable valida la identidad y usa `set_fantasy_admin_role` o `revoke_fantasy_admin_role` mediante una conexión directa privilegiada, fuera del frontend. El trigger registra concesión y revocación, incluido el identificador del operador. El nuevo administrador debe configurar TOTP antes de acceder. Revocar el rol elimina las sesiones administrativas y bloquea inmediatamente las APIs. No compartas cuentas administrativas.
 
+## TRUSTED DATABASE OPERATOR
+
+En esta arquitectura el operador es **una persona con acceso Owner al proyecto Fantasy LPF en Supabase**, autenticada en el dashboard de Supabase y autorizada a usar el SQL Editor con el rol PostgreSQL `postgres`. No es una cuenta Fantasy, un usuario `ADMIN`, Vercel, el worker ni el rol `service_role` expuesto por API. Antes de operar, comprueba en Supabase Dashboard → Project Settings/Members que la cuenta concreta tiene ese permiso; este repositorio no permite verificar quién es el Owner humano actual. El operador debe actuar desde una sesión propia de Supabase, en un equipo confiable, y registrar su identificador real en `p_operator`. La cuenta de aplicación no recibe este privilegio.
+
 ## LOST MFA PROCEDURE / LOST PASSWORD PROCEDURE
 
-Si pierdes el autenticador, contacta a un operador de base de datos confiable. Tras verificar tu identidad por un canal independiente, puede ejecutar `reset_fantasy_admin_mfa(user_id,operator)`, que revoca las sesiones administrativas y deja un registro de auditoría. Después debes volver a registrar TOTP. No existe código de recuperación ni puerta trasera en la UI. Si olvidas la contraseña, el producto aún no ofrece recuperación automática; no podrás acceder hasta que se implemente un procedimiento verificado de recuperación de cuenta. La pérdida del teléfono no justifica desactivar MFA permanentemente.
+Si pierdes el autenticador, el Owner del proyecto Supabase descrito arriba debe verificar tu identidad por un canal independiente y ejecutar `reset_fantasy_admin_mfa(user_id,operator)` desde SQL Editor. La función revoca las sesiones administrativas y registra el reinicio; después debes volver a registrar TOTP. No existe código de recuperación ni puerta trasera en la UI.
+
+Si olvidas la contraseña, **todavía no existe recuperación automática ni un procedimiento break-glass validado en producción**. El procedimiento propuesto requiere al Owner de Supabase: (1) verificar identidad y control de la dirección de correo registrada por un canal independiente; (2) confirmar el `user_id` exacto; (3) generar fuera del dashboard un hash bcrypt de una contraseña nueva sin registrar la contraseña en historial SQL, logs o chat; (4) en una transacción privilegiada, actualizar únicamente `users.password_hash`, revocar todas las filas de `sessions` y `admin_sessions` de ese usuario y registrar `PASSWORD_RECOVERY` en `admin_audit_log` con el identificador del operador; (5) verificar el resultado y exigir nuevo login y MFA. La transacción debe abortar si el `user_id` no existe o no coincide con la cuenta verificada. **No ejecutes este procedimiento hasta disponer de un script parametrizado y una prueba PostgreSQL real de atomicidad y auditoría.** La pérdida del teléfono no justifica desactivar MFA permanentemente.
+
+## MFA ENCRYPTION KEY CUSTODY
+
+`ADMIN_MFA_ENCRYPTION_KEY` debe existir solo como variable de servidor en Vercel. Una copia protegida fuera de Vercel es necesaria para recuperación ante desastre. Si se pierde la única copia, los secretos TOTP cifrados existentes no se pueden descifrar: se deben revocar las sesiones administrativas y reiniciar MFA mediante el procedimiento privilegiado y auditado para cada administrador. No se debe sustituir la clave sin plan de migración. Una rotación futura debe descifrar con la clave anterior y recifrar con la nueva dentro de una operación controlada y verificada, con rollback; luego se retira la clave anterior. Nunca se coloca la clave en el bundle, repositorio, logs ni respuestas API.
 
 ## SUSPECTED COMPROMISE PROCEDURE / EMERGENCY PROCEDURE
 
