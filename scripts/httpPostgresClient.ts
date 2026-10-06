@@ -13,7 +13,7 @@ interface HttpResponse {
 
 function migrationConfig() {
   const url = process.env.MIGRATION_HTTP_URL;
-  const secret = process.env.MIGRATION_SECRET ?? process.env.CRON_SECRET;
+  const secret = process.env.MIGRATION_SECRET;
   if (!url || !secret) throw new Error('MIGRATION_HTTP_URL y MIGRATION_SECRET son obligatorios.');
   return { url: url.replace(/\/$/, ''), secret };
 }

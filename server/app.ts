@@ -17,6 +17,7 @@ import {
 } from './teamRules.js';
 import { ownershipPriceQuote } from './marketEconomy.js';
 import { moneyCents, nullableMoneyCents } from './money.js';
+import { consumeAdminRateLimit, mountAdminRoutes } from './admin.js';
 
 const SESSION_COOKIE = 'fantasy_lpf_session';
 const SESSION_DAYS = 30;
@@ -429,13 +430,28 @@ export function createApp(options: CreateAppOptions = {}) {
   // 8mb accommodates a base64-encoded profile photo upload (client caps raw files at 5MB).
   app.use(express.json({ limit: '8mb' }));
   app.use(cookieParser());
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('X-Frame-Options', 'DENY');
+    if (secureCookies) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    const origin = req.get('origin');
+    const fetchSite = req.get('sec-fetch-site');
+    if (!['GET','HEAD','OPTIONS'].includes(req.method) &&
+      ((fetchSite && !['same-origin','none'].includes(fetchSite)) ||
+       (origin && (() => { try { return new URL(origin).host !== req.get('host'); } catch { return true; } })()))) {
+      return res.status(403).json({ error: { code: 'CSRF_DENIED', message: 'Origen de solicitud inválido.' } });
+    }
+    next();
+  });
   app.locals.db = rawDatabase;
 
   const migrationDatabase = options.postgresDb;
-  if (migrationDatabase && process.env.ENABLE_MIGRATION_ENDPOINT === 'true') {
+  if (migrationDatabase && process.env.NODE_ENV !== 'production'
+    && process.env.ENABLE_MIGRATION_ENDPOINT === 'true' && process.env.MIGRATION_SECRET) {
     app.post('/api/admin/migrate', async (req, res, next) => {
       try {
-        const expected = process.env.MIGRATION_SECRET ?? process.env.CRON_SECRET ?? '';
+        const expected = process.env.MIGRATION_SECRET ?? '';
         const provided = req.get('authorization')?.replace(/^Bearer\s+/i, '') ?? '';
         const expectedBytes = Buffer.from(expected);
         const providedBytes = Buffer.from(provided);
@@ -466,20 +482,17 @@ export function createApp(options: CreateAppOptions = {}) {
       }
     });
   }
-  const authAttempts = new Map<string, { count: number; resetAt: number }>();
-  const authRateLimit = (req: Request, res: Response, next: NextFunction) => {
-    const key = req.ip || req.socket.remoteAddress || 'unknown';
-    const currentTime = Date.now();
-    const current = authAttempts.get(key);
-    const entry = !current || current.resetAt <= currentTime
-      ? { count: 1, resetAt: currentTime + 15 * 60 * 1000 }
-      : { ...current, count: current.count + 1 };
-    authAttempts.set(key, entry);
-    if (entry.count > 30) {
-      res.setHeader('Retry-After', Math.ceil((entry.resetAt - currentTime) / 1000));
-      return res.status(429).json({ error: { code: 'RATE_LIMITED', message: 'Demasiados intentos. Intenta nuevamente en unos minutos.' } });
-    }
-    return next();
+  const authRateLimit = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const identifier = String(req.body?.email ?? req.body?.username ?? '').toLowerCase().slice(0, 254);
+      const ip = req.ip || req.socket.remoteAddress || 'unknown';
+      const perIp = await consumeAdminRateLimit(authDb, `auth-ip:${ip}`, 300, 15);
+      const perAccount = await consumeAdminRateLimit(authDb, `auth-account:${identifier}:${ip}`, 10, 15);
+      const distributed = await consumeAdminRateLimit(authDb, `auth-identifier:${identifier}`, 30, 15);
+      if (!perIp || !perAccount || !distributed) return res.status(429).json({ error: {
+        code: 'RATE_LIMITED', message: 'Demasiados intentos. Intenta nuevamente en unos minutos.' } });
+      next();
+    } catch (error) { next(error); }
   };
 
   app.get('/api/health', async (_req, res, next) => {
@@ -674,6 +687,12 @@ export function createApp(options: CreateAppOptions = {}) {
   });
 
   const authenticated = authMiddleware(authDb, db);
+  mountAdminRoutes(app, {
+    authDb,
+    readDb: applicationDatabase(rawDatabase, { enforceRls: postgresRls, role: 'fantasy_lpf_admin_reader' }),
+    authenticated,
+    secureCookies,
+  });
 
   app.get('/api/me', authenticated, async (req: AuthenticatedRequest, res, next) => {
     try { res.json({ success: true, user: await getMe(db, requireUser(req).userId) }); } catch (error) { next(error); }
@@ -690,8 +709,9 @@ export function createApp(options: CreateAppOptions = {}) {
       const passwordHash = bcrypt.hashSync(input.newPassword, 12);
       await authDb.transaction(async () => {
         await authDb.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(passwordHash, now(), userId);
-        await authDb.prepare('DELETE FROM sessions WHERE user_id = ? AND id <> ?').run(userId, requireUser(req).sessionId);
+        await authDb.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
       })();
+      clearSessionCookie(res, secureCookies);
       res.json({ success: true });
     } catch (error) { next(error); }
   });

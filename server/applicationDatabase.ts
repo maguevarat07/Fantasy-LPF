@@ -52,7 +52,8 @@ class PostgresApplicationDatabase implements ApplicationDatabase {
   private readonly context = new AsyncLocalStorage<PostgresExecutor>();
   private readonly userContext = new AsyncLocalStorage<string>();
 
-  constructor(private readonly database: PostgresDatabase, private readonly enforceRls: boolean) {}
+  constructor(private readonly database: PostgresDatabase, private readonly enforceRls: boolean,
+    private readonly role: 'fantasy_lpf_app' | 'fantasy_lpf_admin_reader') {}
 
   withUser<T>(userId: string, work: () => T): T {
     return this.userContext.run(userId, work);
@@ -63,7 +64,7 @@ class PostgresApplicationDatabase implements ApplicationDatabase {
     if (active) return work(active);
     if (!this.enforceRls) return work(this.database);
     return this.database.transaction(async tx => {
-      await tx.execute('SET LOCAL ROLE fantasy_lpf_app');
+      await tx.execute(`SET LOCAL ROLE ${this.role}`);
       await tx.execute("SELECT set_config('app.user_id', $1, true)", [this.userContext.getStore() ?? '']);
       return work(tx);
     });
@@ -81,7 +82,7 @@ class PostgresApplicationDatabase implements ApplicationDatabase {
   transaction<T>(work: () => T | Promise<T>): () => Promise<T> {
     return () => this.database.transaction(async tx => {
       if (this.enforceRls) {
-        await tx.execute('SET LOCAL ROLE fantasy_lpf_app');
+        await tx.execute(`SET LOCAL ROLE ${this.role}`);
         await tx.execute("SELECT set_config('app.user_id', $1, true)", [this.userContext.getStore() ?? '']);
       }
       return this.context.run(tx, async () => work());
@@ -124,7 +125,9 @@ class SqliteApplicationDatabase implements ApplicationDatabase {
   }
 }
 
-export function applicationDatabase(database: SqliteDatabase | PostgresDatabase, options: { enforceRls?: boolean } = {}): ApplicationDatabase {
+export function applicationDatabase(database: SqliteDatabase | PostgresDatabase, options: {
+  enforceRls?: boolean; role?: 'fantasy_lpf_app' | 'fantasy_lpf_admin_reader'
+} = {}): ApplicationDatabase {
   if ('prepare' in database) return new SqliteApplicationDatabase(database);
-  return new PostgresApplicationDatabase(database, options.enforceRls ?? false);
+  return new PostgresApplicationDatabase(database, options.enforceRls ?? false, options.role ?? 'fantasy_lpf_app');
 }

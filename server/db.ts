@@ -540,6 +540,32 @@ const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE pricing_runs ADD COLUMN input_snapshot_json TEXT;
   `,
+  `
+  CREATE TABLE admin_user_roles (user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK(role IN ('ADMIN','SUPPORT','DATA_ADMIN','SUPER_ADMIN')),
+    granted_by TEXT, granted_at TEXT NOT NULL);
+  CREATE TABLE admin_mfa_credentials (user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    secret_ciphertext TEXT NOT NULL, confirmed_at TEXT, last_used_step INTEGER, created_at TEXT NOT NULL);
+  CREATE TABLE admin_sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+  CREATE INDEX admin_sessions_user_idx ON admin_sessions(user_id);
+  CREATE TABLE admin_audit_log (id TEXT PRIMARY KEY, admin_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    action TEXT NOT NULL, target_type TEXT, target_id TEXT, result TEXT NOT NULL,
+    request_id TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);
+  CREATE INDEX admin_audit_log_recent_idx ON admin_audit_log(created_at DESC);
+  CREATE TABLE admin_rate_limits (bucket TEXT PRIMARY KEY, attempts INTEGER NOT NULL, reset_at TEXT NOT NULL);
+  CREATE TRIGGER admin_role_granted_audit AFTER INSERT ON admin_user_roles BEGIN
+    INSERT INTO admin_audit_log(id,admin_user_id,action,target_type,target_id,result,request_id,created_at)
+    VALUES(lower(hex(randomblob(16))),NULL,'ROLE_GRANTED','USER',NEW.user_id,'SUCCESS',lower(hex(randomblob(16))),datetime('now'));
+  END;
+  CREATE TRIGGER admin_role_revoked_audit AFTER DELETE ON admin_user_roles BEGIN
+    INSERT INTO admin_audit_log(id,admin_user_id,action,target_type,target_id,result,request_id,created_at)
+    VALUES(lower(hex(randomblob(16))),NULL,'ROLE_REVOKED','USER',OLD.user_id,'SUCCESS',lower(hex(randomblob(16))),datetime('now'));
+  END;
+  CREATE TABLE IF NOT EXISTS pipeline_runs (id TEXT PRIMARY KEY, stage TEXT NOT NULL, quality_status TEXT NOT NULL,
+    started_at TEXT NOT NULL, finished_at TEXT, scoring_status TEXT NOT NULL, pricing_status TEXT NOT NULL);
+  `,
 ];
 
 export interface OpenDatabaseOptions {
