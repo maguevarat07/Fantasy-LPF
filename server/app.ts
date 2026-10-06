@@ -153,6 +153,7 @@ class ApiError extends Error {
 export interface CreateAppOptions {
   db?: SqliteDatabase;
   postgresDb?: PostgresDatabase;
+  adminPostgresDb?: PostgresDatabase;
   dbPath?: string;
   secureCookies?: boolean;
   sessionDays?: number;
@@ -687,12 +688,17 @@ export function createApp(options: CreateAppOptions = {}) {
   });
 
   const authenticated = authMiddleware(authDb, db);
-  mountAdminRoutes(app, {
-    authDb,
-    readDb: applicationDatabase(rawDatabase, { enforceRls: postgresRls, role: 'fantasy_lpf_admin_reader' }),
-    authenticated,
-    secureCookies,
-  });
+  // Never route administrative reads through the privileged normal API login.
+  // PostgreSQL tests without an isolated admin login leave these routes closed.
+  if (!postgresRls || options.adminPostgresDb) {
+    mountAdminRoutes(app, {
+      authDb,
+      readDb: applicationDatabase(options.adminPostgresDb ?? rawDatabase,
+        { enforceRls: postgresRls, role: 'fantasy_lpf_admin_reader' }),
+      authenticated,
+      secureCookies,
+    });
+  }
 
   app.get('/api/me', authenticated, async (req: AuthenticatedRequest, res, next) => {
     try { res.json({ success: true, user: await getMe(db, requireUser(req).userId) }); } catch (error) { next(error); }

@@ -5,8 +5,9 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../app.js';
 import { createPostgresDatabase, type PostgresDatabase } from './client.js';
+import { isolatedPostgresTestUrl } from './testIsolation.js';
 
-const testUrl = process.env.POSTGRES_TEST_URL;
+const testUrl = isolatedPostgresTestUrl();
 const schema = `qa_transfers_${randomUUID().replaceAll('-', '')}`;
 let admin: Sql;
 let db: PostgresDatabase;

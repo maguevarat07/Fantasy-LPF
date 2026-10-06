@@ -59,13 +59,25 @@ class PostgresApplicationDatabase implements ApplicationDatabase {
     return this.userContext.run(userId, work);
   }
 
+  private async setRestrictedRole(tx: PostgresExecutor): Promise<void> {
+    if (this.role === 'fantasy_lpf_admin_reader') {
+      const identity = await tx.one<{ login: string; bypass: boolean; superuser: boolean }>(
+        `SELECT session_user AS login, r.rolbypassrls AS bypass, r.rolsuper AS superuser
+         FROM pg_roles r WHERE r.rolname = session_user`);
+      if (identity.login !== 'fantasy_lpf_admin_api' || identity.bypass || identity.superuser) {
+        throw new Error('Administrative database login is not isolated.');
+      }
+    }
+    await tx.execute(`SET LOCAL ROLE ${this.role}`);
+    await tx.execute("SELECT set_config('app.user_id', $1, true)", [this.userContext.getStore() ?? '']);
+  }
+
   private async scoped<T>(work: (executor: PostgresExecutor) => Promise<T>): Promise<T> {
     const active = this.context.getStore();
     if (active) return work(active);
     if (!this.enforceRls) return work(this.database);
     return this.database.transaction(async tx => {
-      await tx.execute(`SET LOCAL ROLE ${this.role}`);
-      await tx.execute("SELECT set_config('app.user_id', $1, true)", [this.userContext.getStore() ?? '']);
+      await this.setRestrictedRole(tx);
       return work(tx);
     });
   }
@@ -82,8 +94,7 @@ class PostgresApplicationDatabase implements ApplicationDatabase {
   transaction<T>(work: () => T | Promise<T>): () => Promise<T> {
     return () => this.database.transaction(async tx => {
       if (this.enforceRls) {
-        await tx.execute(`SET LOCAL ROLE ${this.role}`);
-        await tx.execute("SELECT set_config('app.user_id', $1, true)", [this.userContext.getStore() ?? '']);
+        await this.setRestrictedRole(tx);
       }
       return this.context.run(tx, async () => work());
     });

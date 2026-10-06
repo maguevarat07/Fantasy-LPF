@@ -6,8 +6,12 @@ const migration = readFileSync('supabase/migrations/202610060001_admin_read_only
 describe('administrative migration contract', () => {
   it('creates a non-login reader without bypass RLS and rejects normal memberships', () => {
     expect(migration).toContain('create role fantasy_lpf_admin_reader nologin noinherit nobypassrls');
+    expect(migration).toContain('create role fantasy_lpf_admin_api login noinherit nobypassrls');
+    expect(migration).toContain('grant fantasy_lpf_admin_reader to fantasy_lpf_admin_api');
+    expect(migration).not.toContain('grant fantasy_lpf_admin_reader to postgres');
     for (const role of ['fantasy_lpf_app','anon','authenticated']) {
       expect(migration).toContain(`pg_has_role('${role}', 'fantasy_lpf_admin_reader', 'MEMBER')`);
+      expect(migration).toContain(`pg_has_role('${role}', 'fantasy_lpf_admin_api', 'MEMBER')`);
     }
     expect(migration).not.toContain('grant fantasy_lpf_admin_reader to fantasy_lpf_app');
   });

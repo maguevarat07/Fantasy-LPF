@@ -3,12 +3,13 @@ import { readFile } from 'node:fs/promises';
 import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPostgresDatabase, type PostgresDatabase } from '../postgres/client.js';
+import { isolatedPostgresTestUrl } from '../postgres/testIsolation.js';
 import { consumePipelineQueueMessage, type PipelineQueueMessage } from './queueWorker.js';
 import { buildResult } from './adapter.js';
 import { IngestionOrchestrator } from './orchestrator.js';
 import type { SyncReport } from './types.js';
 
-const testUrl = process.env.POSTGRES_TEST_URL;
+const testUrl = isolatedPostgresTestUrl();
 const suffix = randomUUID().replaceAll('-', '').slice(0, 20);
 const schema = `qa_queue_${suffix}`;
 const queue = `fantasy_pipeline_qa_${suffix}`;

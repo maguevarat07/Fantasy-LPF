@@ -4,13 +4,21 @@ do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'fantasy_lpf_admin_reader') then
     create role fantasy_lpf_admin_reader nologin noinherit nobypassrls;
   end if;
+  -- The admin API connects with this distinct, non-owner login. Provision its
+  -- password out of band only after the migration; no credential is in SQL.
+  if not exists (select 1 from pg_roles where rolname = 'fantasy_lpf_admin_api') then
+    create role fantasy_lpf_admin_api login noinherit nobypassrls;
+  end if;
   if pg_has_role('fantasy_lpf_app', 'fantasy_lpf_admin_reader', 'MEMBER')
      or pg_has_role('anon', 'fantasy_lpf_admin_reader', 'MEMBER')
-     or pg_has_role('authenticated', 'fantasy_lpf_admin_reader', 'MEMBER') then
+     or pg_has_role('authenticated', 'fantasy_lpf_admin_reader', 'MEMBER')
+     or pg_has_role('fantasy_lpf_app', 'fantasy_lpf_admin_api', 'MEMBER')
+     or pg_has_role('anon', 'fantasy_lpf_admin_api', 'MEMBER')
+     or pg_has_role('authenticated', 'fantasy_lpf_admin_api', 'MEMBER') then
     raise exception 'A normal application role can inherit the administrative reader';
   end if;
 end $$;
-grant fantasy_lpf_admin_reader to postgres;
+grant fantasy_lpf_admin_reader to fantasy_lpf_admin_api;
 grant usage on schema public to fantasy_lpf_admin_reader;
 
 create table admin_user_roles (

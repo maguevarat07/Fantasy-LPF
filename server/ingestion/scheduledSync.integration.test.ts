@@ -3,13 +3,14 @@ import { readFile } from 'node:fs/promises';
 import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createPostgresDatabase, type PostgresDatabase } from '../postgres/client.js';
+import { isolatedPostgresTestUrl } from '../postgres/testIsolation.js';
 import { createPostgresCanonicalDataRepository } from '../postgres/canonicalRepository.js';
 import { persistEntities } from './repository.js';
 import { runScheduledDataSync } from './scheduledSync.js';
 import { matchVerificationKey } from './verification.js';
 import type { SyncReport } from './types.js';
 
-const testUrl = process.env.POSTGRES_TEST_URL;
+const testUrl = isolatedPostgresTestUrl();
 const schema = `qa_pipeline_${randomUUID().replaceAll('-', '')}`;
 let admin: Sql;
 let db: PostgresDatabase;

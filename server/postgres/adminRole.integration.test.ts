@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises';
 import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPostgresDatabase, type PostgresDatabase } from './client.js';
+import { isolatedPostgresTestUrl } from './testIsolation.js';
 
-const testUrl = process.env.POSTGRES_TEST_URL;
+const testUrl = isolatedPostgresTestUrl();
 const schema = `qa_admin_${randomUUID().replaceAll('-', '')}`;
 let owner: Sql;
 let db: PostgresDatabase;
@@ -29,17 +30,12 @@ describe.skipIf(!testUrl)('PostgreSQL administrative role boundary', () => {
     if (owner) { await owner.unsafe(`drop schema if exists "${schema}" cascade`); await owner.end({timeout:5}); }
   }, 30_000);
 
-  it('denies direct and inherited SET ROLE from normal application and Supabase browser roles', async () => {
+  it('denies direct, inherited and SET-capable membership for normal roles', async () => {
     for (const role of ['fantasy_lpf_app','anon','authenticated']) {
-      const membership = await db.one<{ allowed: boolean }>(
-        'select pg_has_role($1::text,$2::text,\'MEMBER\') as allowed', [role,'fantasy_lpf_admin_reader']);
-      expect(membership.allowed).toBe(false);
-      await expect(db.transaction(async tx => {
-        // SET ROLE checks the session authorization identity. Simply SET ROLE
-        // from postgres would retain postgres membership and give a false result.
-        await tx.execute(`set session authorization ${role}`);
-        await tx.execute('set role fantasy_lpf_admin_reader');
-      })).rejects.toThrow();
+      const membership = await db.one<{ member: boolean; can_set: boolean }>(
+        `select pg_has_role($1::text,$2::text,'MEMBER') as member,
+                pg_has_role($1::text,$2::text,'SET') as can_set`, [role,'fantasy_lpf_admin_reader']);
+      expect(membership).toEqual({ member: false, can_set: false });
     }
   });
 });

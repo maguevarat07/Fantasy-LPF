@@ -87,14 +87,25 @@ export function createPostgresDatabase(options: CreatePostgresDatabaseOptions = 
 }
 
 let sharedDatabase: PostgresDatabase | undefined;
+let sharedAdminDatabase: PostgresDatabase | undefined;
 
 export function getPostgresDatabase(): PostgresDatabase {
   sharedDatabase ??= createPostgresDatabase();
   return sharedDatabase;
 }
 
+export function getAdminPostgresDatabase(): PostgresDatabase {
+  const url = process.env.ADMIN_DATABASE_URL;
+  if (!url) throw new Error('ADMIN_DATABASE_URL is required for the administrative API.');
+  sharedAdminDatabase ??= createPostgresDatabase({ url });
+  return sharedAdminDatabase;
+}
+
 export async function closePostgresDatabase(): Promise<void> {
   const database = sharedDatabase;
   sharedDatabase = undefined;
   await database?.close();
+  const adminDatabase = sharedAdminDatabase;
+  sharedAdminDatabase = undefined;
+  await adminDatabase?.close();
 }
