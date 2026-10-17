@@ -121,7 +121,7 @@ export const ClasificacionView: React.FC<ClasificacionViewProps> = ({
 
   // Sort based on current view mode
   const sortedMembers = useMemo(() => {
-    const list = [...leaderboardMembers];
+    const list = leaderboardMembers.map(member => ({ ...member }));
     if (viewMode === 'jornada') {
       list.sort((a, b) => b.gwPoints - a.gwPoints);
     } else {
@@ -136,7 +136,8 @@ export const ClasificacionView: React.FC<ClasificacionViewProps> = ({
   const currentUserMember = sortedMembers.find(m => m.isCurrentUser);
   const leader = sortedMembers[0];
   const userRank = currentUserMember ? currentUserMember.position : 1;
-  const ptsToLeader = leader && currentUserMember ? leader.totalPoints - currentUserMember.totalPoints : 0;
+  const selectedPoints = (member: LeagueMember) => viewMode === 'jornada' ? member.gwPoints : member.totalPoints;
+  const ptsToLeader = leader && currentUserMember ? selectedPoints(leader) - selectedPoints(currentUserMember) : 0;
 
   const handleCopy = () => {
     if (!activeLeague) return;
@@ -368,7 +369,7 @@ export const ClasificacionView: React.FC<ClasificacionViewProps> = ({
                   {currentUserMember?.teamName || userTeam?.name || 'Tu Equipo'}
                 </span>
                 <span className="text-[11px] text-zinc-400">
-                  {currentUserMember?.totalPoints ?? 0} pts acumulados
+                  {currentUserMember ? selectedPoints(currentUserMember) : 0} pts {viewMode === 'jornada' ? 'última jornada' : 'acumulados'}
                 </span>
               </div>
             </div>
@@ -415,8 +416,8 @@ export const ClasificacionView: React.FC<ClasificacionViewProps> = ({
                 <span>Mánager / Equipo</span>
               </div>
               <div className="flex items-center gap-6 pr-2">
-                <span className="w-12 text-right">Jornada</span>
-                <span className="w-12 text-right">Total</span>
+                <span className="w-12 text-right">{viewMode === 'jornada' ? 'Total' : 'Jornada'}</span>
+                <span className="w-12 text-right">{viewMode === 'jornada' ? 'Jornada' : 'Total'}</span>
               </div>
             </div>
 
@@ -459,10 +460,10 @@ export const ClasificacionView: React.FC<ClasificacionViewProps> = ({
 
                   <div className="flex items-center gap-6 pr-2">
                     <span className="w-12 text-right font-mono text-xs text-zinc-400">
-                      {member.gwPoints} pts
+                      {viewMode === 'jornada' ? member.totalPoints : member.gwPoints} pts
                     </span>
                     <span className="w-12 text-right font-mono text-xs font-black text-emerald-400">
-                      {member.totalPoints}
+                      {selectedPoints(member)}
                     </span>
                   </div>
                 </div>
