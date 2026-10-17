@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { LeagueMember, Player, Formation } from '../../types/fantasy';
 import { positionLabel } from '../../domain/positionLabels';
+import { lineupGameweekPoints } from '../../domain/lineupGameweekPoints';
 
 interface RivalSquadModalProps {
   member: LeagueMember | null;
@@ -51,10 +52,7 @@ export const RivalSquadModal: React.FC<RivalSquadModalProps> = ({
   const fwds = starters.filter(p => p.position === 'FWD');
 
   // Calculate live sum of points on pitch
-  const livePitchPoints = starters.reduce((acc, p) => {
-    const isCap = p.id === activeCaptainId;
-    return acc + (isCap ? (p.lastGwPoints || 0) * 2 : (p.lastGwPoints || 0));
-  }, 0);
+  const livePitchPoints = lineupGameweekPoints(activeStartersIds, activeCaptainId, allPlayers);
 
   return (
     <div
@@ -94,7 +92,7 @@ export const RivalSquadModal: React.FC<RivalSquadModalProps> = ({
               </p>
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <span className="bg-primary/20 text-primary font-bold text-[11px] px-2 py-0.5 rounded leading-none border border-primary/30">
-                  Jornada: {livePitchPoints || displayGwPoints} PTS
+                  Jornada: {livePitchPoints ?? displayGwPoints} PTS
                 </span>
                 <span className="bg-surface-container-highest text-on-surface font-semibold text-[11px] px-2 py-0.5 rounded leading-none">
                   Total: {displayTotalPoints} pts

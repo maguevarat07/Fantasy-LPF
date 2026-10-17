@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { LeagueMember, Player, Formation, FantasyTeam } from '../../types/fantasy';
 import { RivalSquadModal } from '../modals/RivalSquadModal';
 import { leagueService, PrivateLeagueRecord } from '../../services/leagueService';
+import { lineupGameweekPoints } from '../../domain/lineupGameweekPoints';
 import {
   Users,
   Plus,
@@ -121,7 +122,13 @@ export const ClasificacionView: React.FC<ClasificacionViewProps> = ({
 
   // Sort based on current view mode
   const sortedMembers = useMemo(() => {
-    const list = leaderboardMembers.map(member => ({ ...member }));
+    const list = leaderboardMembers.map(member => {
+      const lineup = member.isCurrentUser && userSquadOverride ? userSquadOverride : member;
+      return {
+        ...member,
+        gwPoints: lineupGameweekPoints(lineup.starters, lineup.captainId, allPlayers) ?? member.gwPoints,
+      };
+    });
     if (viewMode === 'jornada') {
       list.sort((a, b) => b.gwPoints - a.gwPoints);
     } else {
@@ -131,7 +138,7 @@ export const ClasificacionView: React.FC<ClasificacionViewProps> = ({
       m.position = idx + 1;
     });
     return list;
-  }, [leaderboardMembers, viewMode]);
+  }, [leaderboardMembers, viewMode, allPlayers, userSquadOverride]);
 
   const currentUserMember = sortedMembers.find(m => m.isCurrentUser);
   const leader = sortedMembers[0];
